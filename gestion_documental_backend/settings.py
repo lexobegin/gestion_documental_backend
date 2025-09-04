@@ -25,17 +25,22 @@ SECRET_KEY = 'django-insecure-@_zy*lwa!651h7gs-z7jwch_@n3#6iy+$4ijcmu=(_y3puso0w
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost:4200','localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.4']
+ALLOWED_HOSTS = ['localhost:4200', 'alex-orellana-dev-xyz.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.4']
 CORS_ALLOWED_ORIGINS = [
+    "https://gestion-documental-frontend.vercel.app",
     "http://localhost:4200",
+    "http://localhost:8000",
     "http://192.168.0.6:4200",  # Si Angular se accede desde red local
     "http://127.0.0.1:8100",    # Ionic o Flutter en navegador
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 
 # Application definition
 
 INSTALLED_APPS = [
+    'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -46,7 +51,6 @@ INSTALLED_APPS = [
     'core',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
-    'corsheaders',
 ]
 
 MIDDLEWARE = [
@@ -128,7 +132,7 @@ LANGUAGES = [
 ]
 LANGUAGE_CODE = 'es'
 
-TIME_ZONE = 'UTC8'
+TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
@@ -171,3 +175,47 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),                  # Usa "Bearer <token>" en los headers
 }
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Si usas cookies/sessions
+CSRF_TRUSTED_ORIGINS = [
+    "https://gestion-documental-frontend.vercel.app",
+    "https://alex-orellana-dev-xyz.duckdns.org",
+]
+
+# Middleware adicional para headers
+class CorsMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response['Access-Control-Allow-Origin'] = 'https://gestion-documental-frontend.vercel.app'
+        response['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE'
+        response['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-CSRFToken'
+        response['Access-Control-Allow-Credentials'] = 'true'
+        return response
+
+
+# Agrega el middleware al final
+MIDDLEWARE.append('gestion_documental_backend.settings.CorsMiddleware')
