@@ -74,6 +74,12 @@ class Medico(models.Model):
     ]
     estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='Activo')
 
+    especialidades = models.ManyToManyField(
+        'Especialidad',
+        through='MedicoEspecialidad',
+        related_name='medicos'
+    )
+
     def __str__(self):
         return f"Dr. {self.usuario.nombre} {self.usuario.apellido} ({self.numero_licencia})"
     
@@ -112,3 +118,23 @@ class Auto(models.Model):
 
     def __str__(self):
         return f"{self.marca} {self.modelo} ({self.anio})"
+
+class Especialidad(models.Model):
+    codigo = models.CharField(max_length=20, unique=True)
+    nombre = models.CharField(max_length=100, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.nombre} ({self.codigo})"
+
+
+class MedicoEspecialidad(models.Model):
+    medico = models.ForeignKey('Medico', on_delete=models.CASCADE)
+    especialidad = models.ForeignKey('Especialidad', on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = ('medico', 'especialidad')
+        db_table = 'medico_especialidad'
+
+    def __str__(self):
+        return f"{self.medico} - {self.especialidad}"
