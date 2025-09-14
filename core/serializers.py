@@ -130,3 +130,5 @@ class RegistroPacienteSerializer(serializers.ModelSerializer):
 
         Paciente.objects.create(usuario=usuario)
         return usuario
+    
+    
