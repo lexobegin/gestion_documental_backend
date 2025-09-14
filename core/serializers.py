@@ -7,15 +7,49 @@ class RolSerializer(serializers.ModelSerializer):
         fields = ['id', 'nombre_rol', 'descripcion']
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    # Lectura: objeto rol anidado (como “detalle”)
     rol = RolSerializer(read_only=True, source='id_rol')
+    # Escritura: id del rol (FK)
+    id_rol = serializers.PrimaryKeyRelatedField(
+        queryset=Rol.objects.all(),
+        write_only=True
+    )
+    # Escritura: password segura
+    password = serializers.CharField(write_only=True, required=True, min_length=6)
 
     class Meta:
         model = Usuario
         fields = [
-            'id', 'email', 'nombre', 'apellido', 'telefono', 'direccion',
-            'fecha_nacimiento', 'genero', 'activo', 'rol'
+            'id', 'email', 'password', 'nombre', 'apellido', 'telefono', 'direccion',
+            'fecha_nacimiento', 'genero', 'activo', 'rol', 'id_rol'
         ]
+        extra_kwargs = {
+            'email': {'required': True},
+            'nombre': {'required': True},
+            'apellido': {'required': True},
+        }
 
+    def create(self, validated_data):
+        rol = validated_data.pop('id_rol')
+        password = validated_data.pop('password')
+        user = Usuario(**validated_data, id_rol=rol)
+        user.set_password(password)  # <- diferencia vs Auto
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        rol = validated_data.pop('id_rol', None)
+        password = validated_data.pop('password', None)
+        # comportamiento tipo Auto: asignar campos simples
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        # extras de Usuario:
+        if rol:
+            instance.id_rol = rol
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 class EspecialidadSerializer(serializers.ModelSerializer):
     class Meta:
@@ -43,7 +77,6 @@ class MedicoSerializer(serializers.ModelSerializer):
 
 class PacienteSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
-
     class Meta:
         model = Paciente
         fields = [
@@ -55,7 +88,6 @@ class PacienteSerializer(serializers.ModelSerializer):
 
 class AdministradorSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
-
     class Meta:
         model = Administrador
         fields = ['usuario']
@@ -130,3 +162,4 @@ class RegistroPacienteSerializer(serializers.ModelSerializer):
 
         Paciente.objects.create(usuario=usuario)
         return usuario
+
