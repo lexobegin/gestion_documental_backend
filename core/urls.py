@@ -17,6 +17,7 @@ router.register(r'pacientes', PacienteViewSet)
 router.register(r'medicos', MedicoViewSet)
 router.register(r'administradores', AdministradorViewSet)
 router.register(r'roles', RolViewSet)
+router.register(r'permisos', PermisoViewSet)
 router.register(r'especialidades', EspecialidadViewSet)
 #---prueba---
 router.register(r'autos', AutoViewSet)

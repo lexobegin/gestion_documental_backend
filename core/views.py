@@ -1,3 +1,5 @@
+
+
 from rest_framework import viewsets, status, generics, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
@@ -5,6 +7,12 @@ from rest_framework.response import Response
 
 from .models import *
 from .serializers import *
+
+# PermisoViewSet debe ir después de las importaciones
+class PermisoViewSet(viewsets.ModelViewSet):
+    queryset = Permiso.objects.all().order_by('id')
+    serializer_class = PermisoSerializer
+    permission_classes = [IsAuthenticated]
 
 # Registro paciente
 class RegistroPacienteView(generics.CreateAPIView):
@@ -66,10 +74,38 @@ class MiPerfilView(generics.RetrieveUpdateAPIView):
         return self.request.user
 
 # Roles
-class RolViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Rol.objects.all().order_by('id')
+class RolViewSet(viewsets.ModelViewSet):
+
+    queryset = Rol.objects.all().order_by('-id')
+
     serializer_class = RolSerializer
     permission_classes = [IsAuthenticated]
+
+    from rest_framework.decorators import action
+
+    from rest_framework.decorators import action
+    from rest_framework import status
+
+    @action(detail=True, methods=['get', 'put'], url_path='permisos')
+    def permisos(self, request, pk=None):
+        rol = self.get_object()
+        if request.method == 'GET':
+            permisos = rol.permisos.all()
+            return Response([
+                {
+                    'id': p.id,
+                    'nombre': p.nombre,
+                    'codigo': p.codigo,
+                    'descripcion': p.descripcion
+                } for p in permisos
+            ])
+        elif request.method == 'PUT':
+            ids = request.data.get('permisos', [])
+            if not isinstance(ids, list):
+                return Response({'detail': 'El campo permisos debe ser una lista de IDs.'}, status=status.HTTP_400_BAD_REQUEST)
+            rol.permisos.set(ids)
+            rol.save()
+            return Response({'detail': 'Permisos actualizados correctamente.'})
 
 #-----------------Prueba-------
 class AutoViewSet(viewsets.ModelViewSet):

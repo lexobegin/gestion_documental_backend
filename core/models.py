@@ -1,6 +1,16 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 
+
+class Permiso(models.Model):
+    nombre = models.CharField(max_length=100, unique=True)
+    codigo = models.CharField(max_length=50, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.nombre} ({self.codigo})"
+
+
 class UsuarioManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
@@ -12,8 +22,14 @@ class UsuarioManager(BaseUserManager):
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
+        from .models import Rol
+        rol_admin, created = Rol.objects.get_or_create(
+            nombre_rol='Administrador',
+            defaults={'descripcion': 'Rol administrativo'}
+        )
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('id_rol', rol_admin)  # Asignar rol automáticamente
 
         return self.create_user(email, password, **extra_fields)
 
@@ -37,7 +53,8 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['nombre', 'apellido', 'id_rol']
+    #REQUIRED_FIELDS = ['nombre', 'apellido', 'id_rol']
+    REQUIRED_FIELDS = ['nombre']
 
     objects = UsuarioManager()
 
@@ -54,10 +71,18 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
             return 'Administrador'
         return 'Desconocido'
 
+    @property
+    def permisos(self):
+        """Retorna los permisos del rol asignado al usuario"""
+        if self.id_rol:
+            return self.id_rol.permisos.all()
+        return Permiso.objects.none()
+
 
 class Rol(models.Model):
     nombre_rol = models.CharField(max_length=50, unique=True)
     descripcion = models.TextField(blank=True, null=True)
+    permisos = models.ManyToManyField(Permiso, related_name='roles', blank=True)
 
     def __str__(self):
         return self.nombre_rol
