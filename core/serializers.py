@@ -1,12 +1,12 @@
 from rest_framework import serializers
 from .models import *
+from rest_framework import serializers
+from .models import *
 
 class PermisoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permiso
         fields = ['id', 'nombre', 'codigo', 'descripcion']
-from rest_framework import serializers
-from .models import *
 
 class RolSerializer(serializers.ModelSerializer):
     class Meta:
@@ -99,12 +99,6 @@ class AdministradorSerializer(serializers.ModelSerializer):
         model = Administrador
         fields = ['usuario']
 
-#-----------------Prueba-------
-class AutoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Auto
-        fields = '__all__'
-
 class PerfilSerializer(serializers.ModelSerializer):
     #tipo_usuario = serializers.CharField(source='tipo_usuario', read_only=True)
     tipo_usuario = serializers.CharField()
@@ -170,3 +164,131 @@ class RegistroPacienteSerializer(serializers.ModelSerializer):
         Paciente.objects.create(usuario=usuario)
         return usuario
 
+# NUEVOS SERIALIZERS PARA SPRINT 2
+
+class TipoComponenteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TipoComponente
+        fields = ['id', 'nombre', 'descripcion']
+
+class ComponenteUISerializer(serializers.ModelSerializer):
+    tipo_componente = TipoComponenteSerializer(read_only=True)
+    
+    class Meta:
+        model = ComponenteUI
+        fields = [
+            'id', 'tipo_componente', 'codigo_componente', 'nombre_componente',
+            'descripcion', 'modulo', 'ruta', 'icono', 'orden', 'activo'
+        ]
+
+class PermisoComponenteSerializer(serializers.ModelSerializer):
+    permiso = PermisoSerializer(read_only=True)
+    componente = ComponenteUISerializer(read_only=True)
+    id_permiso = serializers.PrimaryKeyRelatedField(
+        queryset=Permiso.objects.all(),
+        write_only=True,
+        source='permiso'
+    )
+    id_componente = serializers.PrimaryKeyRelatedField(
+        queryset=ComponenteUI.objects.all(),
+        write_only=True,
+        source='componente'
+    )
+
+    class Meta:
+        model = PermisoComponente
+        fields = [
+            'id', 'permiso', 'componente', 'id_permiso', 'id_componente',
+            'accion_permitida', 'condiciones'
+        ]
+
+class BitacoraSerializer(serializers.ModelSerializer):
+    usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+
+    class Meta:
+        model = Bitacora
+        fields = [
+            'id', 'usuario', 'usuario_email', 'usuario_nombre', 'ip_address',
+            'accion_realizada', 'modulo_afectado', 'fecha_hora', 'detalles'
+        ]
+        read_only_fields = ['fecha_hora']
+
+class HorarioMedicoSerializer(serializers.ModelSerializer):
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
+    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
+
+    class Meta:
+        model = HorarioMedico
+        fields = [
+            'id', 'medico', 'medico_nombre', 'medico_apellido', 'dia_semana',
+            'hora_inicio', 'hora_fin', 'activo', 'fecha_creacion'
+        ]
+        read_only_fields = ['fecha_creacion']
+
+class AgendaCitaSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
+    paciente_apellido = serializers.CharField(source='paciente.usuario.apellido', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
+    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
+    especialidad_medico = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AgendaCita
+        fields = [
+            'id', 'paciente', 'paciente_nombre', 'paciente_apellido',
+            'medico', 'medico_nombre', 'medico_apellido', 'especialidad_medico',
+            'fecha_cita', 'hora_cita', 'estado', 'motivo', 'notas',
+            'fecha_creacion', 'fecha_actualizacion'
+        ]
+        read_only_fields = ['fecha_creacion', 'fecha_actualizacion']
+
+    def get_especialidad_medico(self, obj):
+        especialidades = obj.medico.especialidades.all()
+        return EspecialidadSerializer(especialidades, many=True).data
+
+class HistoriaClinicaSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
+    paciente_apellido = serializers.CharField(source='paciente.usuario.apellido', read_only=True)
+
+    class Meta:
+        model = HistoriaClinica
+        fields = [
+            'id', 'paciente', 'paciente_nombre', 'paciente_apellido',
+            'fecha_creacion', 'observaciones_generales', 'activo'
+        ]
+        read_only_fields = ['fecha_creacion']
+
+class ConsultaSerializer(serializers.ModelSerializer):
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
+    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
+    paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
+
+    class Meta:
+        model = Consulta
+        fields = [
+            'id', 'historia_clinica', 'medico', 'medico_nombre', 'medico_apellido',
+            'paciente_nombre', 'fecha_consulta', 'motivo_consulta', 'sintomas',
+            'diagnostico', 'tratamiento', 'observaciones'
+        ]
+        read_only_fields = ['fecha_consulta']
+
+class RegistroBackupSerializer(serializers.ModelSerializer):
+    usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)
+    usuario_responsable_nombre = serializers.CharField(source='usuario_responsable.nombre', read_only=True)
+
+    class Meta:
+        model = RegistroBackup
+        fields = [
+            'id', 'nombre_archivo', 'tamano_bytes', 'fecha_backup',
+            'usuario_responsable', 'usuario_responsable_email', 'usuario_responsable_nombre',
+            'tipo_backup', 'estado', 'ubicacion_almacenamiento', 'notas'
+        ]
+        read_only_fields = ['fecha_backup']
+
+
+#-----------------Prueba-------
+class AutoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Auto
+        fields = '__all__'

@@ -1,7 +1,6 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 
-
 class Permiso(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
     codigo = models.CharField(max_length=50, unique=True)
@@ -9,7 +8,6 @@ class Permiso(models.Model):
 
     def __str__(self):
         return f"{self.nombre} ({self.codigo})"
-
 
 class UsuarioManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -32,7 +30,6 @@ class UsuarioManager(BaseUserManager):
         extra_fields.setdefault('id_rol', rol_admin)  # Asignar rol automáticamente
 
         return self.create_user(email, password, **extra_fields)
-
 
 class Usuario(AbstractBaseUser, PermissionsMixin):
     GENERO_CHOICES = [('M', 'Masculino'), ('F', 'Femenino')]
@@ -78,6 +75,20 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
             return self.id_rol.permisos.all()
         return Permiso.objects.none()
 
+    def tiene_permiso_componente(self, codigo_componente, accion='ver'):
+        """
+        Verifica si el usuario tiene permiso para un componente específico
+        """
+        try:
+            componente = ComponenteUI.objects.get(codigo_componente=codigo_componente, activo=True)
+            permiso_componente = PermisoComponente.objects.filter(
+                componente=componente,
+                accion_permitida__in=[accion, 'todos'],
+                permiso__in=self.permisos
+            ).exists()
+            return permiso_componente
+        except ComponenteUI.DoesNotExist:
+            return False
 
 class Rol(models.Model):
     nombre_rol = models.CharField(max_length=50, unique=True)
@@ -134,16 +145,6 @@ class Administrador(models.Model):
     def __str__(self):
         return f"Administrador: {self.usuario.nombre} {self.usuario.apellido}"
 
-#-----------------Prueba-------
-class Auto(models.Model):
-    marca = models.CharField(max_length=100)
-    modelo = models.CharField(max_length=100)
-    anio = models.PositiveIntegerField()
-    color = models.CharField(max_length=50)
-
-    def __str__(self):
-        return f"{self.marca} {self.modelo} ({self.anio})"
-
 class Especialidad(models.Model):
     codigo = models.CharField(max_length=20, unique=True)
     nombre = models.CharField(max_length=100, unique=True)
@@ -151,7 +152,6 @@ class Especialidad(models.Model):
 
     def __str__(self):
         return f"{self.nombre} ({self.codigo})"
-
 
 class MedicoEspecialidad(models.Model):
     medico = models.ForeignKey('Medico', on_delete=models.CASCADE)
@@ -163,3 +163,195 @@ class MedicoEspecialidad(models.Model):
 
     def __str__(self):
         return f"{self.medico} - {self.especialidad}"
+
+# NUEVOS MODELOS PARA SPRINT 2
+
+class TipoComponente(models.Model):
+    nombre = models.CharField(max_length=50, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.nombre
+
+class ComponenteUI(models.Model):
+    tipo_componente = models.ForeignKey(TipoComponente, on_delete=models.CASCADE)
+    codigo_componente = models.CharField(max_length=100, unique=True)
+    nombre_componente = models.CharField(max_length=200)
+    descripcion = models.TextField(blank=True, null=True)
+    modulo = models.CharField(max_length=50)
+    ruta = models.CharField(max_length=200, blank=True, null=True)  # Para menús
+    icono = models.CharField(max_length=100, blank=True, null=True)
+    orden = models.IntegerField(default=0)
+    activo = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.nombre_componente} ({self.codigo_componente})"
+
+    class Meta:
+        verbose_name = "Componente UI"
+        verbose_name_plural = "Componentes UI"
+
+class PermisoComponente(models.Model):
+    ACCIONES_PERMITIDAS = [
+        ('ver', 'Ver'),
+        ('crear', 'Crear'),
+        ('editar', 'Editar'),
+        ('eliminar', 'Eliminar'),
+        ('exportar', 'Exportar'),
+        ('todos', 'Todos'),
+    ]
+    
+    permiso = models.ForeignKey(Permiso, on_delete=models.CASCADE)
+    componente = models.ForeignKey(ComponenteUI, on_delete=models.CASCADE)
+    accion_permitida = models.CharField(max_length=10, choices=ACCIONES_PERMITIDAS)
+    condiciones = models.TextField(blank=True, null=True)  # JSON field para condiciones
+
+    class Meta:
+        unique_together = ('permiso', 'componente', 'accion_permitida')
+        verbose_name = "Permiso Componente"
+        verbose_name_plural = "Permisos Componentes"
+
+    def __str__(self):
+        return f"{self.permiso} - {self.componente} - {self.accion_permitida}"
+
+class Bitacora(models.Model):
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE)
+    ip_address = models.GenericIPAddressField()
+    accion_realizada = models.CharField(max_length=200)
+    modulo_afectado = models.CharField(max_length=50)
+    fecha_hora = models.DateTimeField(auto_now_add=True)
+    detalles = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.usuario.email} - {self.accion_realizada} - {self.fecha_hora}"
+
+    class Meta:
+        verbose_name = "Bitácora"
+        verbose_name_plural = "Bitácoras"
+
+class HorarioMedico(models.Model):
+    DIA_SEMANA_CHOICES = [
+        ('Lunes', 'Lunes'),
+        ('Martes', 'Martes'),
+        ('Miércoles', 'Miércoles'),
+        ('Jueves', 'Jueves'),
+        ('Viernes', 'Viernes'),
+        ('Sábado', 'Sábado'),
+        ('Domingo', 'Domingo'),
+    ]
+    
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    dia_semana = models.CharField(max_length=10, choices=DIA_SEMANA_CHOICES)
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+    activo = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('medico', 'dia_semana', 'hora_inicio', 'hora_fin')
+        verbose_name = "Horario Médico"
+        verbose_name_plural = "Horarios Médicos"
+
+    def __str__(self):
+        return f"{self.medico} - {self.dia_semana} {self.hora_inicio}-{self.hora_fin}"
+
+class AgendaCita(models.Model):
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('confirmada', 'Confirmada'),
+        ('cancelada', 'Cancelada'),
+        ('realizada', 'Realizada'),
+    ]
+    
+    paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE)
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    fecha_cita = models.DateField()
+    hora_cita = models.TimeField()
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='pendiente')
+    motivo = models.TextField(blank=True, null=True)
+    notas = models.TextField(blank=True, null=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Cita {self.paciente} con {self.medico} - {self.fecha_cita} {self.hora_cita}"
+
+    class Meta:
+        verbose_name = "Agenda Cita"
+        verbose_name_plural = "Agenda Citas"
+
+class HistoriaClinica(models.Model):
+    paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    observaciones_generales = models.TextField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['paciente', 'activo'],
+                condition=models.Q(activo=True),
+                name='unique_paciente_activo'
+            )
+        ]
+        verbose_name = "Historia Clínica"
+        verbose_name_plural = "Historias Clínicas"
+
+    def __str__(self):
+        return f"Historia Clínica - {self.paciente}"
+
+class Consulta(models.Model):
+    historia_clinica = models.ForeignKey(HistoriaClinica, on_delete=models.CASCADE)
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    fecha_consulta = models.DateTimeField(auto_now_add=True)
+    motivo_consulta = models.TextField()
+    sintomas = models.TextField(blank=True, null=True)
+    diagnostico = models.TextField(blank=True, null=True)
+    tratamiento = models.TextField(blank=True, null=True)
+    observaciones = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Consulta {self.historia_clinica.paciente} - {self.fecha_consulta}"
+
+    class Meta:
+        verbose_name = "Consulta"
+        verbose_name_plural = "Consultas"
+
+class RegistroBackup(models.Model):
+    TIPO_BACKUP_CHOICES = [
+        ('Completo', 'Completo'),
+        ('Incremental', 'Incremental'),
+        ('Diferencial', 'Diferencial'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('Exitoso', 'Exitoso'),
+        ('Fallido', 'Fallido'),
+        ('En Progreso', 'En Progreso'),
+    ]
+    
+    nombre_archivo = models.CharField(max_length=255)
+    tamano_bytes = models.BigIntegerField(blank=True, null=True)
+    fecha_backup = models.DateTimeField(auto_now_add=True)
+    usuario_responsable = models.ForeignKey(Usuario, on_delete=models.CASCADE)
+    tipo_backup = models.CharField(max_length=15, choices=TIPO_BACKUP_CHOICES)
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES)
+    ubicacion_almacenamiento = models.CharField(max_length=500, blank=True, null=True)
+    notas = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Backup {self.nombre_archivo} - {self.fecha_backup}"
+
+    class Meta:
+        verbose_name = "Registro Backup"
+        verbose_name_plural = "Registros Backup"
+
+#-----------------Prueba-------
+class Auto(models.Model):
+    marca = models.CharField(max_length=100)
+    modelo = models.CharField(max_length=100)
+    anio = models.PositiveIntegerField()
+    color = models.CharField(max_length=50)
+
+    def __str__(self):
+        return f"{self.marca} {self.modelo} ({self.anio})"
