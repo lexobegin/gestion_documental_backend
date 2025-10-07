@@ -41,10 +41,21 @@ urlpatterns = [
     path('registro/paciente/', RegistroPacienteView.as_view(), name='registro-paciente'),
 
     # Endpoints JWT
-    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    # Clasico
+    #path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),    #Iniciar sesion
+    # Personalizado
+    path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'),
+    path('token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'), #Cerrar sesion
 
     # Perfil (Web/Movil)
     path('mi-perfil/', MiPerfilView.as_view(), name='mi-perfil'),
+
+    # Endpoints para selects
+    path('select/pacientes/', PacienteSelectView.as_view(), name='select-pacientes'),
+    path('select/medicos/', MedicoSelectView.as_view(), name='select-medicos'),
+
+    # Endpoints para horarios disponibles
+    path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
+    path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
 ]
