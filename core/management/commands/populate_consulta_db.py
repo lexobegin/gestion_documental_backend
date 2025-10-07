@@ -27,12 +27,12 @@ class Command(BaseCommand):
 
     def crear_tipos_componentes(self):
         tipos = [
-            ('Menú', 'Elementos de navegación principal'),
-            ('Botón', 'Botones de acción en formularios'),
-            ('Formulario', 'Formularios completos de entrada de datos'),
-            ('Sección', 'Secciones de contenido en páginas'),
-            ('Reporte', 'Reportes y visualizaciones de datos'),
-            ('Modal', 'Ventanas modales y diálogos')
+            ('menu', 'Elementos de navegación principal'),
+            ('boton', 'Botones de acción en formularios'),
+            ('formulario', 'Formularios completos de entrada de datos'),
+            ('seccion', 'Secciones de contenido en páginas'),
+            ('reporte', 'Reportes y visualizaciones de datos'),
+            ('modal', 'Ventanas modales y diálogos')
         ]
 
         for nombre, descripcion in tipos:
@@ -43,10 +43,10 @@ class Command(BaseCommand):
         self.stdout.write(f"Tipos de componentes creados: {TipoComponente.objects.count()}")
 
     def crear_componentes_ui(self):
-        tipo_menu = TipoComponente.objects.get(nombre='Menú')
-        tipo_boton = TipoComponente.objects.get(nombre='Botón')
-        tipo_form = TipoComponente.objects.get(nombre='Formulario')
-        tipo_seccion = TipoComponente.objects.get(nombre='Sección')
+        tipo_menu = TipoComponente.objects.get(nombre='menu')
+        tipo_boton = TipoComponente.objects.get(nombre='boton')
+        tipo_form = TipoComponente.objects.get(nombre='formulario')
+        tipo_seccion = TipoComponente.objects.get(nombre='seccion')
 
         componentes = [
             # Menús principales
@@ -92,7 +92,8 @@ class Command(BaseCommand):
                     'modulo': modulo,
                     'ruta': ruta,
                     'icono': icono,
-                    'orden': orden
+                    'orden': orden,
+                    'activo': True
                 }
             )
         self.stdout.write(f"Componentes UI creados: {ComponenteUI.objects.count()}")
@@ -127,6 +128,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Permisos de componentes creados: {PermisoComponente.objects.count()}")
 
     def crear_horarios_medicos(self):
+        """Crear horarios para médicos usando la nueva relación medico_especialidad"""
         medicos = Medico.objects.all()
         
         # Mapeo de días en español
@@ -140,45 +142,61 @@ class Command(BaseCommand):
             (time(15, 0), time(19, 0)),  # Tarde alternativo
         ]
 
+        horarios_creados = 0
+
         for medico in medicos:
-            # Cada médico tiene entre 3 y 5 días de atención
-            dias_atencion = random.sample(dias_semana_espanol, k=random.randint(3, 5))
+            # Obtener todas las especialidades del médico
+            medico_especialidades = MedicoEspecialidad.objects.filter(medico=medico)
             
-            for dia in dias_atencion:
-                hora_inicio, hora_fin = random.choice(horarios_tipicos)
+            if not medico_especialidades.exists():
+                self.stdout.write(self.style.WARNING(f"Médico {medico} no tiene especialidades asignadas"))
+                continue
+            
+            # Cada médico tiene entre 3 y 5 días de atención por especialidad
+            for medico_especialidad in medico_especialidades:
+                dias_atencion = random.sample(dias_semana_espanol, k=random.randint(3, 5))
                 
-                HorarioMedico.objects.get_or_create(
-                    medico=medico,
-                    dia_semana=dia,
-                    defaults={
-                        'hora_inicio': hora_inicio,
-                        'hora_fin': hora_fin,
-                        'activo': True
-                    }
-                )
+                for dia in dias_atencion:
+                    hora_inicio, hora_fin = random.choice(horarios_tipicos)
+                    
+                    horario, created = HorarioMedico.objects.get_or_create(
+                        medico_especialidad=medico_especialidad,
+                        dia_semana=dia,
+                        hora_inicio=hora_inicio,
+                        hora_fin=hora_fin,
+                        defaults={'activo': True}
+                    )
+                    
+                    if created:
+                        horarios_creados += 1
         
-        self.stdout.write(f"Horarios médicos creados: {HorarioMedico.objects.count()}")
+        self.stdout.write(f"Horarios médicos creados: {horarios_creados}")
 
     def crear_historias_clinicas(self):
         pacientes = Paciente.objects.all()
+        historias_creadas = 0
         
         for paciente in pacientes:
-            HistoriaClinica.objects.get_or_create(
+            historia, created = HistoriaClinica.objects.get_or_create(
                 paciente=paciente,
                 activo=True,
                 defaults={
                     'observaciones_generales': fake.paragraph()
                 }
             )
+            if created:
+                historias_creadas += 1
         
-        self.stdout.write(f"Historias clínicas creadas: {HistoriaClinica.objects.count()}")
+        self.stdout.write(f"Historias clínicas creadas: {historias_creadas}")
 
     def crear_citas_ejemplo(self):
-        medicos = Medico.objects.all()[:4]  # Tomar primeros 4 médicos
+        """Crear citas de ejemplo usando la nueva relación medico_especialidad"""
+        # Obtener algunas relaciones médico-especialidad
+        medico_especialidades = MedicoEspecialidad.objects.all()[:8]  # Tomar primeras 8 relaciones
         pacientes = Paciente.objects.all()[:6]  # Tomar primeros 6 pacientes
         
-        if not medicos.exists():
-            self.stdout.write(self.style.WARNING("No hay médicos para crear citas"))
+        if not medico_especialidades.exists():
+            self.stdout.write(self.style.WARNING("No hay relaciones médico-especialidad para crear citas"))
             return
             
         if not pacientes.exists():
@@ -205,8 +223,8 @@ class Command(BaseCommand):
         citas_creadas = 0
 
         # Crear citas para los próximos 15 días
-        for i in range(30):  # Intentar crear más citas
-            medico = random.choice(list(medicos))
+        for i in range(40):  # Intentar crear más citas
+            medico_especialidad = random.choice(list(medico_especialidades))
             paciente = random.choice(list(pacientes))
             
             # Fecha en los próximos 15 días
@@ -216,9 +234,9 @@ class Command(BaseCommand):
             dia_semana_num = fecha_cita.weekday()
             dia_semana_espanol = dias_semana_map[dia_semana_num]
             
-            # Verificar horario disponible del médico
+            # Verificar horario disponible del médico para esta especialidad
             horarios_medico = HorarioMedico.objects.filter(
-                medico=medico, 
+                medico_especialidad=medico_especialidad,
                 dia_semana=dia_semana_espanol,
                 activo=True
             )
@@ -239,7 +257,7 @@ class Command(BaseCommand):
                     
                     # Verificar que no exista ya una cita en ese horario
                     cita_existente = AgendaCita.objects.filter(
-                        medico=medico,
+                        medico_especialidad=medico_especialidad,
                         fecha_cita=fecha_cita,
                         hora_cita=hora_cita
                     ).exists()
@@ -247,7 +265,7 @@ class Command(BaseCommand):
                     if not cita_existente:
                         AgendaCita.objects.create(
                             paciente=paciente,
-                            medico=medico,
+                            medico_especialidad=medico_especialidad,
                             fecha_cita=fecha_cita,
                             hora_cita=hora_cita,
                             estado=random.choice(estados),
@@ -261,86 +279,9 @@ class Command(BaseCommand):
         # Si no se crearon citas, mostrar diagnóstico
         if citas_creadas == 0:
             self.stdout.write(self.style.WARNING("No se pudieron crear citas. Diagnóstico:"))
-            self.stdout.write(f"- Médicos disponibles: {medicos.count()}")
+            self.stdout.write(f"- Relaciones médico-especialidad disponibles: {medico_especialidades.count()}")
             self.stdout.write(f"- Pacientes disponibles: {pacientes.count()}")
             self.stdout.write(f"- Horarios médicos creados: {HorarioMedico.objects.count()}")
-            
-            # Mostrar horarios de los médicos
-            for medico in medicos:
-                horarios = HorarioMedico.objects.filter(medico=medico)
-                self.stdout.write(f"  - Dr. {medico.usuario.nombre}: {horarios.count()} horarios")
-                for horario in horarios:
-                    self.stdout.write(f"    * {horario.dia_semana}: {horario.hora_inicio} - {horario.hora_fin}")
-
-    def crear_citas_ejemplo(self):
-        medicos = Medico.objects.all()[:4]
-        pacientes = Paciente.objects.all()[:6]
-        
-        if not medicos.exists():
-            self.stdout.write(self.style.WARNING("No hay médicos para crear citas"))
-            return
-            
-        if not pacientes.exists():
-            self.stdout.write(self.style.WARNING("No hay pacientes para crear citas"))
-            return
-
-        estados = ['pendiente', 'confirmada', 'realizada']
-        motivos = [
-            "Consulta general", "Control rutinario", "Seguimiento tratamiento",
-            "Chequeo anual", "Dolor persistente", "Segunda opinión"
-        ]
-
-        dias_semana_map = {
-            0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 
-            4: 'Viernes', 5: 'Sábado', 6: 'Domingo'
-        }
-
-        citas_creadas = 0
-
-        for i in range(30):
-            medico = random.choice(list(medicos))
-            paciente = random.choice(list(pacientes))
-            
-            fecha_cita = timezone.now().date() + timedelta(days=random.randint(1, 15))
-            dia_semana_num = fecha_cita.weekday()
-            dia_semana_espanol = dias_semana_map[dia_semana_num]
-            
-            horarios_medico = HorarioMedico.objects.filter(
-                medico=medico, 
-                dia_semana=dia_semana_espanol,
-                activo=True
-            )
-            
-            if horarios_medico.exists():
-                horario = horarios_medico.first()
-                hora_inicio = horario.hora_inicio
-                hora_fin = horario.hora_fin
-                
-                if hora_fin.hour - hora_inicio.hour >= 1:
-                    hora_cita = time(
-                        random.randint(hora_inicio.hour, hora_fin.hour - 1),
-                        random.choice([0, 15, 30, 45])
-                    )
-                    
-                    cita_existente = AgendaCita.objects.filter(
-                        medico=medico,
-                        fecha_cita=fecha_cita,
-                        hora_cita=hora_cita
-                    ).exists()
-                    
-                    if not cita_existente:
-                        AgendaCita.objects.create(
-                            paciente=paciente,
-                            medico=medico,
-                            fecha_cita=fecha_cita,
-                            hora_cita=hora_cita,
-                            estado=random.choice(estados),
-                            motivo=random.choice(motivos),
-                            notas=fake.sentence() if random.random() > 0.5 else None
-                        )
-                        citas_creadas += 1
-        
-        self.stdout.write(f"Citas de ejemplo creadas: {citas_creadas}")
 
     def crear_consultas_medicas(self):
         """Crear consultas médicas realistas basadas en citas realizadas"""
@@ -371,6 +312,18 @@ class Command(BaseCommand):
             'TRAU': [
                 "Dolor en articulaciones", "Hinchazón después de caída", "Limitación de movimiento",
                 "Dolor lumbar", "Esguince de tobillo", "Fractura sospechada"
+            ],
+            'PSIQ': [
+                "Ansiedad", "Insomnio", "Cambios de humor", "Estrés persistente",
+                "Problemas de concentración", "Ataques de pánico"
+            ],
+            'GINE': [
+                "Dolor pélvico", "Alteraciones menstruales", "Flujo vaginal anormal",
+                "Síntomas menopáusicos", "Dolor durante relaciones"
+            ],
+            'OFTA': [
+                "Visión borrosa", "Ojos rojos", "Dolor ocular", "Sensibilidad a la luz",
+                "Ojos secos", "Visión doble"
             ]
         }
 
@@ -385,7 +338,11 @@ class Command(BaseCommand):
             "Artrosis de rodilla",
             "Reflujo gastroesofágico",
             "Migraña crónica",
-            "Dermatitis atópica"
+            "Dermatitis atópica",
+            "Virus estacional",
+            "Esguince grado I",
+            "Contractura muscular",
+            "Resfriado común"
         ]
 
         # Tratamientos comunes
@@ -405,31 +362,29 @@ class Command(BaseCommand):
         consultas_creadas = 0
 
         for cita in citas_realizadas:
-            # Obtener especialidad del médico
-            especialidades_medico = cita.medico.especialidades.all()
-            if especialidades_medico.exists():
-                especialidad_principal = especialidades_medico.first()
-                
-                # Obtener síntomas según especialidad
-                sintomas_especialidad = sintomas_por_especialidad.get(
-                    especialidad_principal.codigo, 
-                    ["Malestar general", "Dolor", "Fiebre"]
-                )
-                
-                # Crear consulta médica
-                historia_clinica = HistoriaClinica.objects.get(paciente=cita.paciente)
-                
-                Consulta.objects.create(
-                    historia_clinica=historia_clinica,
-                    medico=cita.medico,
-                    fecha_consulta=cita.fecha_cita,
-                    motivo_consulta=cita.motivo,
-                    sintomas=', '.join(random.sample(sintomas_especialidad, k=random.randint(1, 3))),
-                    diagnostico=random.choice(diagnosticos),
-                    tratamiento=random.choice(tratamientos),
-                    observaciones=fake.paragraph() if random.random() > 0.3 else None
-                )
-                consultas_creadas += 1
+            # Obtener la especialidad de la relación médico-especialidad
+            especialidad = cita.medico_especialidad.especialidad
+            
+            # Obtener síntomas según especialidad
+            sintomas_especialidad = sintomas_por_especialidad.get(
+                especialidad.codigo, 
+                ["Malestar general", "Dolor", "Fiebre"]
+            )
+            
+            # Crear consulta médica
+            historia_clinica = HistoriaClinica.objects.get(paciente=cita.paciente)
+            
+            Consulta.objects.create(
+                historia_clinica=historia_clinica,
+                medico=cita.medico_especialidad.medico,  # Usar el médico de la relación
+                fecha_consulta=cita.fecha_cita,
+                motivo_consulta=cita.motivo,
+                sintomas=', '.join(random.sample(sintomas_especialidad, k=random.randint(1, 3))),
+                diagnostico=random.choice(diagnosticos),
+                tratamiento=random.choice(tratamientos),
+                observaciones=fake.paragraph() if random.random() > 0.3 else None
+            )
+            consultas_creadas += 1
 
         self.stdout.write(f"Consultas médicas creadas: {consultas_creadas}")
 
@@ -459,6 +414,14 @@ class Command(BaseCommand):
                 'estado': 'Exitoso',
                 'ubicacion_almacenamiento': '/backups/incremental/',
                 'notas': 'Backup incremental. Solo cambios desde el último backup completo.'
+            },
+            {
+                'nombre_archivo': 'backup_diferencial_20240117_030000.sql',
+                'tamano_bytes': 209715200,  # 200 MB
+                'tipo_backup': 'Diferencial',
+                'estado': 'Exitoso',
+                'ubicacion_almacenamiento': '/backups/diferenciales/',
+                'notas': 'Backup diferencial semanal. Incluye todos los cambios de la semana.'
             }
         ]
 
