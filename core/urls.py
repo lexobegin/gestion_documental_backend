@@ -54,6 +54,7 @@ urlpatterns = [
     # Endpoints para selects
     path('select/pacientes/', PacienteSelectView.as_view(), name='select-pacientes'),
     path('select/medicos/', MedicoSelectView.as_view(), name='select-medicos'),
+    path('select/medico-especialidades/', MedicoEspecialidadSelectView.as_view(), name='select-medico-especialidades'),
 
     # Endpoints para horarios disponibles
     path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
