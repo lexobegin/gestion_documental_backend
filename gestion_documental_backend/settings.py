@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -52,7 +53,43 @@ INSTALLED_APPS = [
     'core',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'dbbackup',
+    'django_celery_beat',
+    'django_celery_results',
 ]
+
+# Configuración de backup
+DBBACKUP_STORAGE = 'django.core.files.storage.FileSystemStorage'
+DBBACKUP_STORAGE_OPTIONS = {'location': 'backups/'}
+
+# Para PostgreSQL
+DBBACKUP_CONNECTOR_MAPPING = {
+    'django.db.backends.postgresql': 'dbbackup.db.postgresql.PgDumpConnector',
+}
+
+# Directorio de backups con permisos adecuados
+BACKUP_DIR = '/var/backups/app_backups'
+
+# Asegurar que el directorio existe y tiene permisos
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR, mode=0o755)
+
+# En views.py, modificar el directorio para producción
+backup_dir = os.environ.get('BACKUP_DIR', 'backups')
+
+# Configuración Celery
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'America/La_Paz'
+
+# Para producción en GCP, usar Redis Cloud o Memorystore
+if os.environ.get('ENVIRONMENT') == 'production':
+    CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
