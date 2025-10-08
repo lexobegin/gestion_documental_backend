@@ -15,6 +15,12 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, Ou
 from django.contrib.auth import authenticate
 from django.db import transaction
 
+import os
+import subprocess
+from django.conf import settings
+from django.http import HttpResponse
+from django.core.files.storage import FileSystemStorage
+
 from .models import *
 from .serializers import *
 
@@ -1366,6 +1372,521 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             'detail': 'Backup realizado exitosamente.',
             'backup': RegistroBackupSerializer(backup).data
         })
+
+class RegistroBackupViewSet(viewsets.ModelViewSet):
+    queryset = RegistroBackup.objects.select_related('usuario_responsable').all().order_by('-fecha_backup')
+    serializer_class = RegistroBackupSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['tipo_backup', 'estado', 'usuario_responsable']
+    search_fields = ['nombre_archivo']
+    ordering_fields = ['fecha_backup']
+    ordering = ['-fecha_backup']
+
+    def destroy(self, request, *args, **kwargs):
+        """Sobrescribir delete para eliminar también el archivo físico"""
+        try:
+            instance = self.get_object()
+            filepath = instance.ubicacion_almacenamiento
+            
+            # Eliminar archivo físico si existe
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                print(f"Archivo eliminado: {filepath}")
+            
+            # Eliminar registro de la base de datos
+            self.perform_destroy(instance)
+            
+            return Response({
+                'detail': 'Backup y archivo eliminados correctamente.'
+            }, status=status.HTTP_204_NO_CONTENT)
+            
+        except Exception as e:
+            return Response({
+                'detail': 'Error al eliminar el backup.',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], url_path='realizar-backup')
+    def realizar_backup(self, request):
+        """Endpoint para realizar backup real de la base de datos - Multiplataforma"""
+        try:
+            # Crear directorio de backups si no existe
+            backup_dir = 'backups'
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            
+            # Nombre del archivo con timestamp
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"backup_{timestamp}.sql"
+            filepath = os.path.join(backup_dir, filename)
+            
+            # Crear registro en la base de datos
+            backup = RegistroBackup.objects.create(
+                nombre_archivo=filename,
+                usuario_responsable=request.user,
+                tipo_backup=request.data.get('tipo_backup', 'Completo'),
+                estado='En Progreso',
+                ubicacion_almacenamiento=filepath
+            )
+            
+            # Realizar backup de PostgreSQL
+            db_settings = settings.DATABASES['default']
+            
+            # DETECCIÓN DE PLATAFORMA Y RUTA DE pg_dump
+            import platform
+            sistema_operativo = platform.system()
+            
+            if sistema_operativo == 'Windows':
+                # Rutas para Windows
+                pg_dump_path = r'C:\Program Files\PostgreSQL\16\bin\pg_dump.exe'
+                # Verificar existencia en Windows
+                if not os.path.exists(pg_dump_path):
+                    # Intentar detectar automáticamente en Windows
+                    pg_dump_path = self._encontrar_pg_dump_windows()
+            else:
+                # Linux/Ubuntu - pg_dump normalmente está en el PATH
+                pg_dump_path = 'pg_dump'
+            
+            # VERIFICACIÓN FINAL DE pg_dump
+            if sistema_operativo != 'Windows':
+                # En Linux, verificar si pg_dump está en el PATH
+                which_result = subprocess.run(['which', 'pg_dump'], capture_output=True, text=True)
+                if which_result.returncode != 0:
+                    # Intentar rutas comunes en Linux
+                    rutas_linux = [
+                        '/usr/bin/pg_dump',
+                        '/usr/local/bin/pg_dump',
+                        '/usr/lib/postgresql/16/bin/pg_dump',
+                        '/usr/lib/postgresql/15/bin/pg_dump',
+                        '/usr/lib/postgresql/14/bin/pg_dump',
+                    ]
+                    for ruta in rutas_linux:
+                        if os.path.exists(ruta):
+                            pg_dump_path = ruta
+                            break
+                    else:
+                        # pg_dump no encontrado en Linux
+                        backup.estado = 'Fallido'
+                        backup.notas = "pg_dump no encontrado en el sistema"
+                        backup.save()
+                        return Response({
+                            'detail': 'pg_dump no encontrado en el sistema.',
+                            'sistema_operativo': sistema_operativo,
+                            'sugerencia_ubuntu': 'Ejecute: sudo apt-get install postgresql-client-16'
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Verificar que pg_dump existe y es ejecutable
+            if not os.path.exists(pg_dump_path):
+                backup.estado = 'Fallido'
+                backup.notas = f"pg_dump no encontrado en: {pg_dump_path}"
+                backup.save()
+                return Response({
+                    'detail': 'Herramienta de backup no encontrada.',
+                    'sistema_operativo': sistema_operativo,
+                    'ruta_buscada': pg_dump_path,
+                    'sugerencia_ubuntu': 'Instale postgresql-client: sudo apt-get install postgresql-client-16'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Comando para pg_dump (compatible con ambos sistemas)
+            cmd = [
+                pg_dump_path,
+                '-h', db_settings.get('HOST', 'localhost'),
+                '-p', db_settings.get('PORT', '5432'),
+                '-U', db_settings['USER'],
+                '-d', db_settings['NAME'],
+                '-f', filepath,
+                '-w',  # No pedir password
+                '--no-password'  # Asegurar que no pida password interactivo
+            ]
+            
+            # Configurar variables de entorno
+            env = os.environ.copy()
+            env['PGPASSWORD'] = db_settings['PASSWORD']
+            
+            # Para Linux, asegurar el locale
+            if sistema_operativo != 'Windows':
+                env['PGCLIENTENCODING'] = 'UTF-8'
+                env['LANG'] = 'en_US.UTF-8'
+            
+            # Ejecutar backup
+            result = subprocess.run(
+                cmd, 
+                env=env, 
+                capture_output=True, 
+                text=True, 
+                timeout=300,  # 5 minutos timeout
+                # En Linux, puede necesitar shell=False explícitamente
+                shell=False
+            )
+            
+            if result.returncode == 0:
+                # Verificar que el archivo se creó
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    backup.estado = 'Exitoso'
+                    backup.tamano_bytes = file_size
+                    backup.save()
+                    
+                    return Response({
+                        'detail': 'Backup realizado exitosamente.',
+                        'backup': RegistroBackupSerializer(backup).data,
+                        'tamano_mb': round(file_size / (1024 * 1024), 2),
+                        'sistema_operativo': sistema_operativo,
+                        'ruta_archivo': filepath
+                    })
+                else:
+                    backup.estado = 'Fallido'
+                    backup.notas = f"Backup exitoso pero archivo no creado: {filepath}"
+                    backup.save()
+                    return Response({
+                        'detail': 'Error: Archivo de backup no creado.',
+                        'sistema_operativo': sistema_operativo
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            else:
+                # Error en backup
+                backup.estado = 'Fallido'
+                backup.notas = f"Error: {result.stderr}"
+                backup.save()
+                
+                return Response({
+                    'detail': 'Error al realizar el backup.',
+                    'error': result.stderr,
+                    'returncode': result.returncode,
+                    'sistema_operativo': sistema_operativo,
+                    'comando': ' '.join(cmd)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except subprocess.TimeoutExpired:
+            backup.estado = 'Fallido'
+            backup.notas = "Timeout: El backup tardó más de 5 minutos"
+            backup.save()
+            return Response({
+                'detail': 'Timeout: El backup tardó demasiado tiempo.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Exception as e:
+            return Response({
+                'detail': 'Error inesperado al realizar el backup.',
+                'error': str(e),
+                'sistema_operativo': platform.system() if 'platform' in locals() else 'Desconocido'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _encontrar_pg_dump_windows(self):
+        """Buscar pg_dump automáticamente en Windows"""
+        rutas_posibles = [
+            r'C:\Program Files\PostgreSQL\16\bin\pg_dump.exe',
+            r'C:\Program Files\PostgreSQL\15\bin\pg_dump.exe',
+            r'C:\Program Files\PostgreSQL\14\bin\pg_dump.exe',
+            r'C:\Program Files\PostgreSQL\13\bin\pg_dump.exe',
+        ]
+        
+        for ruta in rutas_posibles:
+            if os.path.exists(ruta):
+                return ruta
+        
+        # Si no se encuentra, devolver la ruta por defecto
+        return r'C:\Program Files\PostgreSQL\16\bin\pg_dump.exe'
+
+    @action(detail=True, methods=['get'], url_path='descargar')
+    def descargar_backup(self, request, pk=None):
+        """Endpoint para descargar archivo de backup"""
+        try:
+            backup = self.get_object()
+            filepath = backup.ubicacion_almacenamiento
+            
+            if not os.path.exists(filepath):
+                return Response(
+                    {'detail': 'El archivo de backup no existe.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Leer archivo
+            with open(filepath, 'rb') as f:
+                response = HttpResponse(f.read(), content_type='application/sql')
+                response['Content-Disposition'] = f'attachment; filename="{backup.nombre_archivo}"'
+                return response
+                
+        except Exception as e:
+            return Response({
+                'detail': 'Error al descargar el backup.',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], url_path='listar-archivos')
+    def listar_archivos_backup(self, request):
+        """Endpoint para listar archivos de backup disponibles"""
+        backup_dir = 'backups'
+        if not os.path.exists(backup_dir):
+            return Response([])
+        
+        archivos = []
+        for filename in os.listdir(backup_dir):
+            if filename.endswith('.sql'):
+                filepath = os.path.join(backup_dir, filename)
+                file_stats = os.stat(filepath)
+                archivos.append({
+                    'nombre': filename,
+                    'tamano_bytes': file_stats.st_size,
+                    'tamano_mb': round(file_stats.st_size / (1024 * 1024), 2),
+                    'fecha_modificacion': timezone.datetime.fromtimestamp(file_stats.st_mtime),
+                    'ruta': filepath
+                })
+        
+        # Ordenar por fecha de modificación (más reciente primero)
+        archivos.sort(key=lambda x: x['fecha_modificacion'], reverse=True)
+        
+        return Response(archivos)
+
+    @action(detail=True, methods=['post'], url_path='restore')
+    def restore_backup(self, request, pk=None):
+        """Restaurar base de datos desde un backup existente"""
+        try:
+            backup = self.get_object()
+            filepath = backup.ubicacion_almacenamiento
+            
+            # Verificar que el archivo existe
+            if not os.path.exists(filepath):
+                return Response({
+                    'detail': 'El archivo de backup no existe.',
+                    'ruta': filepath
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Realizar restore
+            db_settings = settings.DATABASES['default']
+            
+            # Detectar plataforma
+            import platform
+            sistema_operativo = platform.system()
+            
+            if sistema_operativo == 'Windows':
+                psql_path = r'C:\Program Files\PostgreSQL\16\bin\psql.exe'
+            else:
+                psql_path = 'psql'
+            
+            # Comando para restore
+            cmd = [
+                psql_path,
+                '-h', db_settings.get('HOST', 'localhost'),
+                '-p', db_settings.get('PORT', '5432'),
+                '-U', db_settings['USER'],
+                '-d', db_settings['NAME'],
+                '-f', filepath,
+                '-w'
+            ]
+            
+            # Variables de entorno
+            env = os.environ.copy()
+            env['PGPASSWORD'] = db_settings['PASSWORD']
+            
+            # Para Linux
+            if sistema_operativo != 'Windows':
+                env['PGCLIENTENCODING'] = 'UTF-8'
+                env['LANG'] = 'en_US.UTF-8'
+            
+            # Ejecutar restore
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)  # 10 minutos timeout
+            
+            if result.returncode == 0:
+                # Registrar acción en bitácora
+                Bitacora.objects.create(
+                    usuario=request.user,
+                    ip_address=self._get_client_ip(request),
+                    accion_realizada=f"RESTORE desde backup: {backup.nombre_archivo}",
+                    modulo_afectado='Backup/Restore',
+                    detalles=f"Backup restaurado exitosamente: {backup.nombre_archivo}"
+                )
+                
+                return Response({
+                    'detail': 'Base de datos restaurada exitosamente.',
+                    'backup_utilizado': backup.nombre_archivo,
+                    'archivo': filepath
+                })
+            else:
+                return Response({
+                    'detail': 'Error al restaurar la base de datos.',
+                    'error': result.stderr,
+                    'returncode': result.returncode
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except subprocess.TimeoutExpired:
+            return Response({
+                'detail': 'Timeout: El restore tardó más de 10 minutos.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Exception as e:
+            return Response({
+                'detail': 'Error inesperado al realizar el restore.',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'], url_path='restore-from-file')
+    def restore_from_file(self, request):
+        """Restaurar base de datos desde un archivo de backup subido"""
+        try:
+            # Verificar que se subió un archivo
+            if 'backup_file' not in request.FILES:
+                return Response({
+                    'detail': 'No se proporcionó archivo de backup.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            backup_file = request.FILES['backup_file']
+            
+            # Validar que sea un archivo SQL
+            if not backup_file.name.endswith('.sql'):
+                return Response({
+                    'detail': 'El archivo debe ser un backup SQL (.sql).'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Crear directorio temporal si no existe
+            temp_dir = 'backups/temp'
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            
+            # Guardar archivo temporalmente
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            temp_filename = f"restore_temp_{timestamp}.sql"
+            temp_filepath = os.path.join(temp_dir, temp_filename)
+            
+            with open(temp_filepath, 'wb+') as destination:
+                for chunk in backup_file.chunks():
+                    destination.write(chunk)
+            
+            # Realizar restore
+            db_settings = settings.DATABASES['default']
+            
+            # Detectar plataforma
+            import platform
+            sistema_operativo = platform.system()
+            
+            if sistema_operativo == 'Windows':
+                psql_path = r'C:\Program Files\PostgreSQL\16\bin\psql.exe'
+            else:
+                psql_path = 'psql'
+            
+            # Comando para restore
+            cmd = [
+                psql_path,
+                '-h', db_settings.get('HOST', 'localhost'),
+                '-p', db_settings.get('PORT', '5432'),
+                '-U', db_settings['USER'],
+                '-d', db_settings['NAME'],
+                '-f', temp_filepath,
+                '-w'
+            ]
+            
+            # Variables de entorno
+            env = os.environ.copy()
+            env['PGPASSWORD'] = db_settings['PASSWORD']
+            
+            # Para Linux
+            if sistema_operativo != 'Windows':
+                env['PGCLIENTENCODING'] = 'UTF-8'
+                env['LANG'] = 'en_US.UTF-8'
+            
+            # Ejecutar restore
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
+            
+            # Limpiar archivo temporal
+            try:
+                os.remove(temp_filepath)
+            except:
+                pass
+            
+            if result.returncode == 0:
+                # Registrar acción en bitácora
+                Bitacora.objects.create(
+                    usuario=request.user,
+                    ip_address=self._get_client_ip(request),
+                    accion_realizada=f"RESTORE desde archivo: {backup_file.name}",
+                    modulo_afectado='Backup/Restore',
+                    detalles=f"Base de datos restaurada desde archivo: {backup_file.name}"
+                )
+                
+                return Response({
+                    'detail': 'Base de datos restaurada exitosamente desde archivo.',
+                    'archivo_utilizado': backup_file.name
+                })
+            else:
+                return Response({
+                    'detail': 'Error al restaurar la base de datos.',
+                    'error': result.stderr,
+                    'returncode': result.returncode
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except subprocess.TimeoutExpired:
+            # Limpiar archivo temporal en caso de timeout
+            try:
+                os.remove(temp_filepath)
+            except:
+                pass
+            
+            return Response({
+                'detail': 'Timeout: El restore tardó más de 10 minutos.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Exception as e:
+            # Limpiar archivo temporal en caso de error
+            try:
+                os.remove(temp_filepath)
+            except:
+                pass
+            
+            return Response({
+                'detail': 'Error inesperado al realizar el restore.',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_client_ip(self, request):
+        """Obtener IP del cliente"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+    @action(detail=True, methods=['get'], url_path='verificar')
+    def verificar_backup(self, request, pk=None):
+        """Verificar integridad de un archivo de backup"""
+        try:
+            backup = self.get_object()
+            filepath = backup.ubicacion_almacenamiento
+            
+            if not os.path.exists(filepath):
+                return Response({
+                    'detail': 'El archivo de backup no existe.',
+                    'valido': False
+                })
+            
+            # Verificar que el archivo no esté vacío
+            file_size = os.path.getsize(filepath)
+            if file_size == 0:
+                return Response({
+                    'detail': 'El archivo de backup está vacío.',
+                    'valido': False,
+                    'tamano_bytes': file_size
+                })
+            
+            # Verificar contenido básico (debería contener PostgreSQL)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                first_lines = ''.join([f.readline() for _ in range(5)])
+            
+            es_valido = 'PostgreSQL' in first_lines or 'pg_dump' in first_lines
+            
+            return Response({
+                'valido': es_valido,
+                'tamano_bytes': file_size,
+                'tamano_mb': round(file_size / (1024 * 1024), 2),
+                'primeras_lineas': first_lines[:500]  # Primeros 500 caracteres
+            })
+            
+        except Exception as e:
+            return Response({
+                'detail': 'Error al verificar el backup.',
+                'error': str(e),
+                'valido': False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class MedicoEspecialidadSelectView(generics.ListAPIView):
     """

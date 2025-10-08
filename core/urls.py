@@ -28,6 +28,14 @@ router.register(r'horarios-medico', HorarioMedicoViewSet)
 router.register(r'agenda-citas', AgendaCitaViewSet)
 router.register(r'historias-clinicas', HistoriaClinicaViewSet)
 router.register(r'consultas', ConsultaViewSet)
+
+# - POST /api/backups/realizar-backup/
+# - GET /api/backups/{id}/descargar/
+# - GET /api/backups/listar-archivos/
+# - POST /api/backups/2/restore/
+# - POST /api/backups/restore-from-file/
+# Body: form-data con archivo en campo 'backup_file'
+# - GET /api/backups/2/verificar/
 router.register(r'backups', RegistroBackupViewSet)
 
 #---prueba---
