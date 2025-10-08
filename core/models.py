@@ -154,6 +154,7 @@ class Especialidad(models.Model):
         return f"{self.nombre} ({self.codigo})"
 
 class MedicoEspecialidad(models.Model):
+    id = models.AutoField(primary_key=True)
     medico = models.ForeignKey('Medico', on_delete=models.CASCADE)
     especialidad = models.ForeignKey('Especialidad', on_delete=models.CASCADE)
 
@@ -229,6 +230,28 @@ class Bitacora(models.Model):
         verbose_name = "Bitácora"
         verbose_name_plural = "Bitácoras"
 
+    @classmethod
+    def registrar_accion(cls, usuario, request, accion, modulo, detalles=None):
+        """
+        Método helper para registrar acciones en la bitácora
+        """
+        ip_address = None
+        if request:
+            # Obtener IP del cliente
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(',')[0]
+            else:
+                ip_address = request.META.get('REMOTE_ADDR')
+        
+        return cls.objects.create(
+            usuario=usuario,
+            ip_address=ip_address,
+            accion_realizada=accion,
+            modulo_afectado=modulo,
+            detalles=detalles
+        )
+
 class HorarioMedico(models.Model):
     DIA_SEMANA_CHOICES = [
         ('Lunes', 'Lunes'),
@@ -240,7 +263,7 @@ class HorarioMedico(models.Model):
         ('Domingo', 'Domingo'),
     ]
     
-    medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    medico_especialidad = models.ForeignKey(MedicoEspecialidad, on_delete=models.CASCADE)
     dia_semana = models.CharField(max_length=10, choices=DIA_SEMANA_CHOICES)
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField()
@@ -248,12 +271,12 @@ class HorarioMedico(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('medico', 'dia_semana', 'hora_inicio', 'hora_fin')
+        unique_together = ('medico_especialidad', 'dia_semana', 'hora_inicio', 'hora_fin')
         verbose_name = "Horario Médico"
         verbose_name_plural = "Horarios Médicos"
 
     def __str__(self):
-        return f"{self.medico} - {self.dia_semana} {self.hora_inicio}-{self.hora_fin}"
+        return f"{self.medico_especialidad.medico} - {self.medico_especialidad.especialidad} - {self.dia_semana} {self.hora_inicio}-{self.hora_fin}"
 
 class AgendaCita(models.Model):
     ESTADO_CHOICES = [
@@ -264,7 +287,7 @@ class AgendaCita(models.Model):
     ]
     
     paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE)
-    medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    medico_especialidad = models.ForeignKey(MedicoEspecialidad, on_delete=models.CASCADE)  # NUEVA RELACIÓN
     fecha_cita = models.DateField()
     hora_cita = models.TimeField()
     estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='pendiente')
@@ -274,7 +297,8 @@ class AgendaCita(models.Model):
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Cita {self.paciente} con {self.medico} - {self.fecha_cita} {self.hora_cita}"
+        medico_esp = self.medico_especialidad
+        return f"Cita {self.paciente} con {medico_esp.medico} - {medico_esp.especialidad} - {self.fecha_cita} {self.hora_cita}"
 
     class Meta:
         verbose_name = "Agenda Cita"

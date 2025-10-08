@@ -10,7 +10,6 @@ from rest_framework_simplejwt.views import (
 
 router = DefaultRouter()
 
-router = DefaultRouter()
 router.register(r'usuarios', UsuarioViewSet)
 router.register(r'pacientes', PacienteViewSet)
 router.register(r'medicos', MedicoViewSet)
@@ -29,6 +28,14 @@ router.register(r'horarios-medico', HorarioMedicoViewSet)
 router.register(r'agenda-citas', AgendaCitaViewSet)
 router.register(r'historias-clinicas', HistoriaClinicaViewSet)
 router.register(r'consultas', ConsultaViewSet)
+
+# - POST /api/backups/realizar-backup/
+# - GET /api/backups/{id}/descargar/
+# - GET /api/backups/listar-archivos/
+# - POST /api/backups/2/restore/
+# - POST /api/backups/restore-from-file/
+# Body: form-data con archivo en campo 'backup_file'
+# - GET /api/backups/2/verificar/
 router.register(r'backups', RegistroBackupViewSet)
 
 #---prueba---
@@ -40,11 +47,24 @@ urlpatterns = [
     # Registro (Movil)
     path('registro/paciente/', RegistroPacienteView.as_view(), name='registro-paciente'),
 
-    # Endpoints JWT
-    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    # ✅ ENDPOINTS PERSONALIZADOS DE AUTENTICACIÓN
+    path('login/', login_personalizado, name='login_personalizado'),
+    path('logout/', logout_personalizado, name='logout_personalizado'),
+
+    # Endpoints JWT (mantenidos por compatibilidad)
+    path('token/', login_personalizado, name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/blacklist/', TokenBlacklistView.as_view(), name='token_blacklist'),
 
     # Perfil (Web/Movil)
     path('mi-perfil/', MiPerfilView.as_view(), name='mi-perfil'),
+
+    # Endpoints para selects
+    path('select/pacientes/', PacienteSelectView.as_view(), name='select-pacientes'),
+    path('select/medicos/', MedicoSelectView.as_view(), name='select-medicos'),
+    path('select/medico-especialidades/', MedicoEspecialidadSelectView.as_view(), name='select-medico-especialidades'),
+
+    # Endpoints para horarios disponibles
+    path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
+    path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
 ]

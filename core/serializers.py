@@ -1,7 +1,24 @@
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
 from .models import *
-from rest_framework import serializers
-from .models import *
+
+# TOKEN
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        
+        # Agregar datos del usuario al response del token
+        user = self.user
+        data['user'] = {
+            'id': user.id,
+            'email': user.email,
+            'nombre': user.nombre,
+            'apellido': user.apellido,
+            'tipo_usuario': user.tipo_usuario,
+            'rol': RolSerializer(user.id_rol).data if user.id_rol else None
+        }
+        return data
 
 class PermisoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -58,17 +75,53 @@ class UsuarioSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+class UsuarioSelectSerializer(serializers.ModelSerializer):
+    """
+    Serializer simplificado para selects
+    """
+    nombre_completo = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Usuario
+        fields = ['id', 'email', 'nombre', 'apellido', 'nombre_completo']
+
+    def get_nombre_completo(self, obj):
+        return f"{obj.nombre} {obj.apellido}"
+
 class EspecialidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Especialidad
         fields = ['id', 'codigo', 'nombre', 'descripcion']
 
 class MedicoEspecialidadSerializer(serializers.ModelSerializer):
-    especialidad = EspecialidadSerializer(read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre_completo', read_only=True)
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
 
     class Meta:
         model = MedicoEspecialidad
-        fields = ['especialidad']
+        fields = ['id', 'medico', 'medico_nombre', 'especialidad', 'especialidad_nombre']
+
+class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
+    """
+    Serializer para select de MedicoEspecialidad
+    """
+    medico_nombre_completo = serializers.SerializerMethodField()
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
+    especialidad_codigo = serializers.CharField(source='especialidad.codigo', read_only=True)
+
+    class Meta:
+        model = MedicoEspecialidad
+        fields = [
+            'id', 
+            'medico', 
+            'medico_nombre_completo',
+            'especialidad', 
+            'especialidad_nombre',
+            'especialidad_codigo'
+        ]
+
+    def get_medico_nombre_completo(self, obj):
+        return f"Dr. {obj.medico.usuario.nombre} {obj.medico.usuario.apellido}"
 
 class MedicoSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
@@ -82,6 +135,18 @@ class MedicoSerializer(serializers.ModelSerializer):
         relaciones = MedicoEspecialidad.objects.filter(medico=obj).select_related('especialidad')
         return MedicoEspecialidadSerializer(relaciones, many=True).data
 
+class MedicoSelectSerializer(serializers.ModelSerializer):
+    """
+    Serializer para select de médicos
+    """
+    usuario = UsuarioSelectSerializer(read_only=True)
+    nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    especialidades = EspecialidadSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Medico
+        fields = ['usuario', 'nombre_completo', 'numero_licencia', 'estado', 'especialidades']
+
 class PacienteSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
     class Meta:
@@ -92,6 +157,17 @@ class PacienteSerializer(serializers.ModelSerializer):
             'contacto_emergencia_telefono', 'contacto_emergencia_parentesco',
             'estado'
         ]
+
+class PacienteSelectSerializer(serializers.ModelSerializer):
+    """
+    Serializer para select de pacientes
+    """
+    usuario = UsuarioSelectSerializer(read_only=True)
+    nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+
+    class Meta:
+        model = Paciente
+        fields = ['usuario', 'nombre_completo', 'estado']
 
 class AdministradorSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
@@ -215,37 +291,90 @@ class BitacoraSerializer(serializers.ModelSerializer):
         read_only_fields = ['fecha_hora']
 
 class HorarioMedicoSerializer(serializers.ModelSerializer):
-    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
-    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
+    medico_nombre = serializers.CharField(source='medico_especialidad.medico.usuario.nombre', read_only=True)
+    medico_apellido = serializers.CharField(source='medico_especialidad.medico.usuario.apellido', read_only=True)
+    especialidad_nombre = serializers.CharField(source='medico_especialidad.especialidad.nombre', read_only=True)
+    medico_id = serializers.IntegerField(source='medico_especialidad.medico.usuario.id', read_only=True)
+    especialidad_id = serializers.IntegerField(source='medico_especialidad.especialidad.id', read_only=True)
 
     class Meta:
         model = HorarioMedico
         fields = [
-            'id', 'medico', 'medico_nombre', 'medico_apellido', 'dia_semana',
+            'id', 'medico_especialidad', 'medico_id', 'medico_nombre', 'medico_apellido',
+            'especialidad_id', 'especialidad_nombre', 'dia_semana',
             'hora_inicio', 'hora_fin', 'activo', 'fecha_creacion'
         ]
         read_only_fields = ['fecha_creacion']
 
+class HorarioDisponibleSerializer(serializers.Serializer):
+    """
+    Serializer para horarios disponibles
+    """
+    fecha = serializers.DateField()
+    hora = serializers.TimeField()
+    medico_especialidad_id = serializers.IntegerField()  # CAMBIADO: ahora usamos este ID
+    medico_id = serializers.IntegerField()
+    medico_nombre = serializers.CharField()
+    especialidad_id = serializers.IntegerField()
+    especialidad_nombre = serializers.CharField()
+
+class MedicoHorarioSerializer(serializers.ModelSerializer):
+    """
+    Serializer simplificado para médicos en horarios
+    """
+    nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    especialidades = EspecialidadSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Medico
+        fields = ['usuario', 'nombre_completo', 'especialidades']
+
+class MedicoEspecialidadHorarioSerializer(serializers.ModelSerializer):
+    """
+    Serializer para médicos con sus especialidades (para selects de horarios)
+    """
+    medico_id = serializers.IntegerField(source='medico.usuario.id', read_only=True)
+    medico_nombre_completo = serializers.CharField(source='medico.usuario.nombre_completo', read_only=True)
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
+    
+    # Horarios disponibles de esta combinación médico-especialidad
+    horarios_disponibles = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MedicoEspecialidad
+        fields = [
+            'id', 'medico_id', 'medico_nombre_completo', 
+            'especialidad', 'especialidad_nombre', 'horarios_disponibles'
+        ]
+
+    def get_horarios_disponibles(self, obj):
+        # Aquí podrías agregar lógica para obtener horarios disponibles
+        # de esta combinación médico-especialidad
+        horarios = HorarioMedico.objects.filter(
+            medico_especialidad=obj,
+            activo=True
+        )
+        return HorarioMedicoSerializer(horarios, many=True).data
+
 class AgendaCitaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='paciente.usuario.apellido', read_only=True)
-    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
-    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
-    especialidad_medico = serializers.SerializerMethodField()
+    medico_nombre = serializers.CharField(source='medico_especialidad.medico.usuario.nombre', read_only=True)
+    medico_apellido = serializers.CharField(source='medico_especialidad.medico.usuario.apellido', read_only=True)
+    especialidad_nombre = serializers.CharField(source='medico_especialidad.especialidad.nombre', read_only=True)
+    medico_id = serializers.IntegerField(source='medico_especialidad.medico.usuario.id', read_only=True)
+    especialidad_id = serializers.IntegerField(source='medico_especialidad.especialidad.id', read_only=True)
 
     class Meta:
         model = AgendaCita
         fields = [
             'id', 'paciente', 'paciente_nombre', 'paciente_apellido',
-            'medico', 'medico_nombre', 'medico_apellido', 'especialidad_medico',
+            'medico_especialidad', 'medico_id', 'medico_nombre', 'medico_apellido',
+            'especialidad_id', 'especialidad_nombre',
             'fecha_cita', 'hora_cita', 'estado', 'motivo', 'notas',
             'fecha_creacion', 'fecha_actualizacion'
         ]
         read_only_fields = ['fecha_creacion', 'fecha_actualizacion']
-
-    def get_especialidad_medico(self, obj):
-        especialidades = obj.medico.especialidades.all()
-        return EspecialidadSerializer(especialidades, many=True).data
 
 class HistoriaClinicaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)

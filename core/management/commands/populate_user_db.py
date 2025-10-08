@@ -19,6 +19,7 @@ class Command(BaseCommand):
         self.crear_especialidades()
         self.crear_medicos()
         self.crear_pacientes()
+        # ELIMINADO: self.crear_componentes_ui() y self.crear_permisos_componentes()
 
         self.stdout.write(self.style.SUCCESS("¡Datos generados exitosamente!"))
 
@@ -227,12 +228,16 @@ class Command(BaseCommand):
                     firma_digital=f"Firma digital del Dr. {medico_data['nombre']} {medico_data['apellido']}"
                 )
 
-                # Asignar especialidades específicas
+                # Asignar especialidades específicas - ESTO CREA MedicoEspecialidad
                 for codigo_especialidad in medico_data['especialidades']:
                     especialidad = Especialidad.objects.get(codigo=codigo_especialidad)
-                    MedicoEspecialidad.objects.create(medico=medico, especialidad=especialidad)
+                    MedicoEspecialidad.objects.get_or_create(
+                        medico=medico, 
+                        especialidad=especialidad
+                    )
 
         self.stdout.write(f"Médicos creados: {Medico.objects.count()}")
+        self.stdout.write(f"Relaciones médico-especialidad creadas: {MedicoEspecialidad.objects.count()}")
 
     def crear_pacientes(self):
         rol_paciente = Rol.objects.get(nombre_rol='Paciente')
