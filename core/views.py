@@ -1367,6 +1367,50 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             'backup': RegistroBackupSerializer(backup).data
         })
 
+class MedicoEspecialidadSelectView(generics.ListAPIView):
+    """
+    Endpoint para select de MedicoEspecialidad - sin paginación
+    Filtrable por médico y especialidad
+    """
+    serializer_class = MedicoEspecialidadSelectSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = MedicoEspecialidad.objects.select_related(
+            'medico__usuario', 
+            'especialidad'
+        ).filter(
+            medico__usuario__activo=True,
+            medico__estado='Activo'
+        ).order_by('medico__usuario__nombre', 'medico__usuario__apellido', 'especialidad__nombre')
+        
+        # Filtro por médico (id del médico)
+        medico_id = self.request.query_params.get('medico_id', None)
+        if medico_id:
+            queryset = queryset.filter(medico__usuario__id=medico_id)
+        
+        # Filtro por especialidad (id de especialidad)
+        especialidad_id = self.request.query_params.get('especialidad_id', None)
+        if especialidad_id:
+            queryset = queryset.filter(especialidad__id=especialidad_id)
+        
+        # Búsqueda por nombre de médico o especialidad
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(medico__usuario__nombre__icontains=search) |
+                Q(medico__usuario__apellido__icontains=search) |
+                Q(especialidad__nombre__icontains=search) |
+                Q(especialidad__codigo__icontains=search)
+            )
+        
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        # Deshabilitar paginación
+        self.pagination_class = None
+        return super().list(request, *args, **kwargs)
+
 #-----------------Prueba-------
 class AutoViewSet(viewsets.ModelViewSet):
     queryset = Auto.objects.all().order_by('-id')
