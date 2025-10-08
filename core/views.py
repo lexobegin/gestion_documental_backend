@@ -1260,11 +1260,9 @@ class ConsultaViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
-        
-        # Médico: solo ver sus consultas
+
         if hasattr(user, 'medico'):
             return queryset.filter(medico=user.medico)
-        # Paciente: solo ver consultas de su historia clínica
         elif hasattr(user, 'paciente'):
             return queryset.filter(historia_clinica__paciente=user.paciente)
         return queryset

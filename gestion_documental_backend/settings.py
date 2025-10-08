@@ -132,7 +132,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'gdocumental_db',
         'USER': 'postgres',
-        'PASSWORD': '12345',
+        'PASSWORD': '2170',
         'HOST': 'localhost',
         'PORT': '5432',
         'OPTIONS': {
