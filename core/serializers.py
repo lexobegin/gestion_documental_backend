@@ -260,18 +260,65 @@ class HistoriaClinicaSerializer(serializers.ModelSerializer):
         read_only_fields = ['fecha_creacion']
 
 class ConsultaSerializer(serializers.ModelSerializer):
-    medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
-    medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
-    paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
+    # Campos calculados/automáticos en backend
+    historia_clinica = serializers.PrimaryKeyRelatedField(read_only=True)
+    medico = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    # Campo de entrada desde el frontend
+    paciente = serializers.IntegerField(write_only=True)
 
     class Meta:
         model = Consulta
         fields = [
-            'id', 'historia_clinica', 'medico', 'medico_nombre', 'medico_apellido',
-            'paciente_nombre', 'fecha_consulta', 'motivo_consulta', 'sintomas',
-            'diagnostico', 'tratamiento', 'observaciones'
+            'id',
+            'historia_clinica',
+            'medico',
+            'paciente',
+            'motivo_consulta',
+            'sintomas',
+            'diagnostico',
+            'tratamiento',
+            'observaciones',
+            'fecha_consulta',
         ]
-        read_only_fields = ['fecha_consulta']
+        read_only_fields = ['id', 'fecha_consulta', 'historia_clinica', 'medico']
+
+    def validate(self, attrs):
+        # Validar que exista historia clínica activa para el paciente
+        paciente_id = attrs.get('paciente')
+        if paciente_id is None:
+            raise ValidationError({'paciente': 'Este campo es requerido.'})
+
+        historia = HistoriaClinica.objects.filter(paciente_id=paciente_id, activo=True).first()
+        if historia is None:
+            raise ValidationError({'paciente': 'El paciente no tiene una historia clínica activa.'})
+
+        # Guardar para usar en create sin tener que reconsultar
+        attrs['_historia'] = historia
+        return attrs
+
+    def create(self, validated_data):
+        # Remover el campo que no pertenece al modelo
+        validated_data.pop('paciente', None)
+
+        # Recuperar historia precalculada en validate
+        historia = validated_data.pop('_historia', None)
+
+        # Usuario y médico asociado
+        request = self.context.get('request')
+        if request is None or not hasattr(request.user, 'medico'):
+            raise PermissionDenied('Solo los médicos autenticados pueden crear consultas.')
+
+        medico = request.user.medico
+
+        # Crear instancia usando únicamente campos del modelo
+        return Consulta.objects.create(
+            historia_clinica=historia,
+            medico=medico,
+            **validated_data
+        )
+
+
 
 class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)
