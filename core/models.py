@@ -230,6 +230,28 @@ class Bitacora(models.Model):
         verbose_name = "Bitácora"
         verbose_name_plural = "Bitácoras"
 
+    @classmethod
+    def registrar_accion(cls, usuario, request, accion, modulo, detalles=None):
+        """
+        Método helper para registrar acciones en la bitácora
+        """
+        ip_address = None
+        if request:
+            # Obtener IP del cliente
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(',')[0]
+            else:
+                ip_address = request.META.get('REMOTE_ADDR')
+        
+        return cls.objects.create(
+            usuario=usuario,
+            ip_address=ip_address,
+            accion_realizada=accion,
+            modulo_afectado=modulo,
+            detalles=detalles
+        )
+
 class HorarioMedico(models.Model):
     DIA_SEMANA_CHOICES = [
         ('Lunes', 'Lunes'),
