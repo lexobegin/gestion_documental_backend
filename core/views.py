@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status, generics, permissions
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -9,7 +10,10 @@ from django.db.models import Q
 from datetime import datetime, timedelta, time
 
 from rest_framework_simplejwt.views import TokenObtainPairView
-#from .serializers import CustomTokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+from django.contrib.auth import authenticate
+from django.db import transaction
 
 import os
 import subprocess
@@ -20,9 +24,134 @@ from django.core.files.storage import FileSystemStorage
 from .models import *
 from .serializers import *
 
-#TOKEN
+# VISTA PERSONALIZADA DE LOGIN
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_personalizado(request):
+    """
+    Vista personalizada para login que registra en bitácora
+    """
+    email = request.data.get('email')
+    password = request.data.get('password')
+    
+    if not email or not password:
+        return Response(
+            {'detail': 'Email y contraseña son requeridos'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Autenticar usuario - Usamos username field que debería ser el email
+    user = authenticate(request, username=email, password=password)
+    
+    if user is not None and user.is_active:
+        # Generar tokens JWT
+        refresh = RefreshToken.for_user(user)
+        
+        # Registrar en bitácora
+        try:
+            with transaction.atomic():
+                Bitacora.objects.create(
+                    usuario=user,
+                    ip_address=get_client_ip(request),
+                    accion_realizada='Inicio de sesión exitoso',
+                    modulo_afectado='autenticacion',
+                    detalles=f'Usuario {email} inició sesión correctamente'
+                )
+        except Exception as e:
+            print(f"Error al registrar en bitácora: {str(e)}")
+            # Continuamos aunque falle la bitácora
+        
+        # Serializar datos del usuario
+        from .serializers import UsuarioSerializer
+        user_data = UsuarioSerializer(user).data
+        
+        # Devolver respuesta similar a SimpleJWT
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': user_data
+        })
+    else:
+        # Registrar intento fallido
+        try:
+            usuario_admin = Usuario.objects.filter(is_superuser=True).first()
+            if usuario_admin:
+                Bitacora.objects.create(
+                    usuario=usuario_admin,
+                    ip_address=get_client_ip(request),
+                    accion_realizada='Intento fallido de inicio de sesión',
+                    modulo_afectado='autenticacion',
+                    detalles=f'Intento fallido para usuario: {email}'
+                )
+        except Exception as e:
+            print(f"Error al registrar intento fallido: {str(e)}")
+        
+        return Response(
+            {'detail': 'Credenciales inválidas'}, 
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+
+# VISTA PERSONALIZADA DE LOGOUT
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_personalizado(request):
+    """
+    Vista personalizada para logout que invalida el token y registra en bitácora
+    """
+    try:
+        refresh_token = request.data.get('refresh_token')
+        
+        if refresh_token:
+            # Invalidar el refresh token
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        
+        # También invalidar el access token actual
+        # En SimpleJWT, los access tokens no se pueden blacklistear por defecto
+        # pero podemos registrar el logout en bitácora
+        
+        # Registrar en bitácora
+        Bitacora.objects.create(
+            usuario=request.user,
+            ip_address=get_client_ip(request),
+            accion_realizada='Cierre de sesión exitoso',
+            modulo_afectado='autenticacion',
+            detalles=f'Usuario {request.user.email} cerró sesión correctamente'
+        )
+        
+        return Response({
+            'detail': 'Sesión cerrada correctamente'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        # Registrar error en bitácora
+        Bitacora.objects.create(
+            usuario=request.user,
+            ip_address=get_client_ip(request),
+            accion_realizada='Error en cierre de sesión',
+            modulo_afectado='autenticacion',
+            detalles=f'Error al cerrar sesión: {str(e)}'
+        )
+        
+        return Response({
+            'detail': 'Error al cerrar sesión'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+def get_client_ip(request):
+    """Obtener IP del cliente"""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR', '0.0.0.0')
+    return ip
+
+#TOKEN (Mantengo por si acaso, pero usaremos login_personalizado)
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+
+# EL ENDPOINT PUBLICO registrar_acceso HA SIDO ELIMINADO
+# Y REEMPLAZADO POR login_personalizado y logout_personalizado
 
 # Views
 class PermisoViewSet(viewsets.ModelViewSet):
@@ -33,12 +162,55 @@ class PermisoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre', 'codigo']
     search_fields = ['nombre', 'codigo', 'descripcion']
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó permiso: {instance.nombre}",
+            modulo="permisos",
+            detalles=f"Permiso {instance.codigo} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó permiso: {instance.nombre}",
+            modulo="permisos",
+            detalles=f"Permiso {instance.codigo} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó permiso: {instance.nombre}",
+            modulo="permisos",
+            detalles=f"Permiso {instance.codigo} eliminado"
+        )
+        instance.delete()
+
 class RegistroPacienteView(generics.CreateAPIView):
     serializer_class = RegistroPacienteSerializer
     permission_classes = [permissions.AllowAny]
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=instance,
+            request=self.request,
+            accion="Registro de nuevo paciente",
+            modulo="pacientes",
+            detalles=f"Paciente {instance.email} registrado en el sistema"
+        )
+
 class UsuarioViewSet(viewsets.ModelViewSet):
-    #queryset = Usuario.objects.select_related('id_rol').all().order_by('-id')
     queryset = Usuario.objects.select_related('id_rol').all()
     serializer_class = UsuarioSerializer
     permission_classes = [IsAuthenticated]
@@ -47,6 +219,39 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     search_fields = ['email', 'nombre', 'apellido', 'telefono']
     ordering_fields = ['id', 'email', 'nombre', 'apellido', 'activo']
     ordering = ['-id']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó usuario: {instance.email}",
+            modulo="usuarios",
+            detalles=f"Usuario {instance.nombre} {instance.apellido} creado con rol {instance.id_rol.nombre_rol}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó usuario: {instance.email}",
+            modulo="usuarios",
+            detalles=f"Usuario {instance.nombre} {instance.apellido} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó usuario: {instance.email}",
+            modulo="usuarios",
+            detalles=f"Usuario {instance.nombre} {instance.apellido} eliminado"
+        )
+        instance.delete()
 
     @action(detail=True, methods=['post'], url_path='cambiar-password', permission_classes=[IsAuthenticated])
     def cambiar_password(self, request, pk=None):
@@ -59,6 +264,16 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         user = self.get_object()
         user.set_password(new_password)
         user.save()
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Cambió password de usuario: {user.email}",
+            modulo="usuarios",
+            detalles="Contraseña actualizada"
+        )
+        
         return Response({'detail': 'Password actualizado correctamente.'}, status=status.HTTP_200_OK)
 
 class PacienteViewSet(viewsets.ReadOnlyModelViewSet):
@@ -153,6 +368,17 @@ class MiPerfilView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó su perfil",
+            modulo="perfil",
+            detalles="Información personal actualizada"
+        )
+
 class RolViewSet(viewsets.ModelViewSet):
     queryset = Rol.objects.all().order_by('-id')
     serializer_class = RolSerializer
@@ -160,6 +386,39 @@ class RolViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['nombre_rol']
     search_fields = ['nombre_rol', 'descripcion']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó rol: {instance.nombre_rol}",
+            modulo="roles",
+            detalles=f"Rol {instance.nombre_rol} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó rol: {instance.nombre_rol}",
+            modulo="roles",
+            detalles=f"Rol {instance.nombre_rol} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó rol: {instance.nombre_rol}",
+            modulo="roles",
+            detalles=f"Rol {instance.nombre_rol} eliminado"
+        )
+        instance.delete()
 
     @action(detail=True, methods=['get', 'put'], url_path='permisos')
     def permisos(self, request, pk=None):
@@ -178,8 +437,23 @@ class RolViewSet(viewsets.ModelViewSet):
             ids = request.data.get('permisos', [])
             if not isinstance(ids, list):
                 return Response({'detail': 'El campo permisos debe ser una lista de IDs.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Registrar cambio de permisos
+            permisos_anteriores = set(rol.permisos.values_list('id', flat=True))
+            permisos_nuevos = set(ids)
+            
             rol.permisos.set(ids)
             rol.save()
+            
+            # Registrar en bitácora
+            Bitacora.registrar_accion(
+                usuario=self.request.user,
+                request=self.request,
+                accion=f"Actualizó permisos del rol: {rol.nombre_rol}",
+                modulo="roles",
+                detalles=f"Permisos modificados: {len(permisos_nuevos - permisos_anteriores)} agregados, {len(permisos_anteriores - permisos_nuevos)} removidos"
+            )
+            
             return Response({'detail': 'Permisos actualizados correctamente.'})
 
 class EspecialidadViewSet(viewsets.ModelViewSet):
@@ -189,6 +463,39 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['nombre']
     search_fields = ['nombre', 'codigo', 'descripcion']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó especialidad: {instance.nombre}",
+            modulo="especialidades",
+            detalles=f"Especialidad {instance.codigo} creada"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó especialidad: {instance.nombre}",
+            modulo="especialidades",
+            detalles=f"Especialidad {instance.codigo} actualizada"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó especialidad: {instance.nombre}",
+            modulo="especialidades",
+            detalles=f"Especialidad {instance.codigo} eliminada"
+        )
+        instance.delete()
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -209,6 +516,39 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['nombre', 'descripcion']
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó tipo componente: {instance.nombre}",
+            modulo="componentes",
+            detalles=f"Tipo componente {instance.nombre} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó tipo componente: {instance.nombre}",
+            modulo="componentes",
+            detalles=f"Tipo componente {instance.nombre} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó tipo componente: {instance.nombre}",
+            modulo="componentes",
+            detalles=f"Tipo componente {instance.nombre} eliminado"
+        )
+        instance.delete()
+
 class ComponenteUIViewSet(viewsets.ModelViewSet):
     queryset = ComponenteUI.objects.select_related('tipo_componente').all().order_by('orden')
     serializer_class = ComponenteUISerializer
@@ -218,6 +558,39 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre_componente', 'codigo_componente', 'modulo']
     ordering_fields = ['orden', 'nombre_componente']
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó componente UI: {instance.nombre_componente}",
+            modulo="componentes",
+            detalles=f"Componente {instance.codigo_componente} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó componente UI: {instance.nombre_componente}",
+            modulo="componentes",
+            detalles=f"Componente {instance.codigo_componente} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó componente UI: {instance.nombre_componente}",
+            modulo="componentes",
+            detalles=f"Componente {instance.codigo_componente} eliminado"
+        )
+        instance.delete()
+
 class PermisoComponenteViewSet(viewsets.ModelViewSet):
     queryset = PermisoComponente.objects.select_related('permiso', 'componente').all().order_by('id')
     serializer_class = PermisoComponenteSerializer
@@ -225,15 +598,199 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['permiso', 'componente', 'accion_permitida']
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
+            modulo="permisos_componentes",
+            detalles=f"Permiso {instance.accion_permitida} asignado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
+            modulo="permisos_componentes",
+            detalles=f"Permiso {instance.accion_permitida} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
+            modulo="permisos_componentes",
+            detalles=f"Permiso {instance.accion_permitida} eliminado"
+        )
+        instance.delete()
+
 class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Bitacora.objects.select_related('usuario').all().order_by('-fecha_hora')
     serializer_class = BitacoraSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['modulo_afectado', 'usuario']
-    search_fields = ['accion_realizada', 'modulo_afectado', 'usuario__email']
+    search_fields = ['accion_realizada', 'modulo_afectado', 'usuario__email', 'detalles']
     ordering_fields = ['fecha_hora', 'accion_realizada']
     ordering = ['-fecha_hora']
+
+    # ✅ EXPORTAR A PDF
+    @action(detail=False, methods=['get'], url_path='exportar-pdf')
+    def exportar_pdf(self, request):
+        """
+        Exportar bitácora a PDF
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó bitácora a PDF",
+            modulo="bitacora",
+            detalles="Exportación de registros de bitácora en formato PDF"
+        )
+        
+        # Usa tu método existente de exportación PDF
+        return self._exportar_pdf(queryset, "Reporte_Bitacora")
+
+    # ✅ EXPORTAR A EXCEL
+    @action(detail=False, methods=['get'], url_path='exportar-excel')
+    def exportar_excel(self, request):
+        """
+        Exportar bitácora a Excel
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó bitácora a Excel",
+            modulo="bitacora",
+            detalles="Exportación de registros de bitácora en formato Excel"
+        )
+        
+        # Usa tu método existente de exportación Excel
+        return self._exportar_excel(queryset, "Reporte_Bitacora")
+
+    # ✅ EXPORTAR A HTML
+    @action(detail=False, methods=['get'], url_path='exportar-html')
+    def exportar_html(self, request):
+        """
+        Exportar bitácora a HTML
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó bitácora a HTML",
+            modulo="bitacora",
+            detalles="Exportación de registros de bitácora en formato HTML"
+        )
+        
+        # Usa tu método existente de exportación HTML
+        return self._exportar_html(queryset, "Reporte_Bitacora")
+
+    # ✅ ENDPOINT PARA VER DETALLES COMPLETOS
+    @action(detail=True, methods=['get'], url_path='detalle-completo')
+    def detalle_completo(self, request, pk=None):
+        """
+        Endpoint para ver detalles completos de un registro de bitácora
+        """
+        registro = self.get_object()
+        
+        # Datos detallados del registro
+        datos_detallados = {
+            'id': registro.id,
+            'fecha_hora': registro.fecha_hora,
+            'fecha_hora_formateada': registro.fecha_hora.strftime('%d/%m/%Y %H:%M:%S'),
+            'usuario': {
+                'id': registro.usuario.id if registro.usuario else None,
+                'email': registro.usuario.email if registro.usuario else 'N/A',
+                'nombre_completo': f"{registro.usuario.nombre} {registro.usuario.apellido}" if registro.usuario else 'N/A',
+                'rol': registro.usuario.id_rol.nombre_rol if registro.usuario and registro.usuario.id_rol else 'N/A'
+            },
+            'accion_realizada': registro.accion_realizada,
+            'modulo_afectado': registro.modulo_afectado,
+            'ip_address': registro.ip_address,
+            'detalles': registro.detalles,
+            'ubicacion_aproximada': self._get_ubicacion_aproximada(registro.ip_address),
+            'navegador_info': self._extraer_info_navegador(registro)
+        }
+        
+        return Response(datos_detallados)
+
+    def _get_ubicacion_aproximada(self, ip):
+        """Obtener ubicación aproximada basada en IP"""
+        if ip in ['127.0.0.1', 'localhost']:
+            return 'Localhost (Servidor Local)'
+        elif ip.startswith('192.168.') or ip.startswith('10.') or ip.startswith('172.'):
+            return 'Red Interna'
+        elif ip == '0.0.0.0':
+            return 'IP No Disponible'
+        else:
+            return 'Red Externa'
+
+    def _extraer_info_navegador(self, registro):
+        """Extraer información del navegador si está disponible"""
+        # Si tienes campo user_agent en tu modelo Bitacora
+        if hasattr(registro, 'user_agent') and registro.user_agent:
+            user_agent = registro.user_agent.lower()
+            if 'chrome' in user_agent:
+                return 'Google Chrome'
+            elif 'firefox' in user_agent:
+                return 'Mozilla Firefox'
+            elif 'safari' in user_agent and 'chrome' not in user_agent:
+                return 'Safari'
+            elif 'edge' in user_agent:
+                return 'Microsoft Edge'
+            else:
+                return 'Navegador no identificado'
+        return 'No disponible'
+
+    # ✅ MÉTODOS DE EXPORTACIÓN (ajusta según tus métodos existentes)
+    def _exportar_pdf(self, queryset, nombre_archivo):
+        """Método para exportar a PDF - ajusta según tu implementación existente"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.pdf"'
+        
+        # Tu código de generación PDF aquí (como lo tienes en otros ViewSets)
+        # ...
+        
+        return response
+
+    def _exportar_excel(self, queryset, nombre_archivo):
+        """Método para exportar a Excel - ajusta según tu implementación existente"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.xlsx"'
+        
+        # Tu código de generación Excel aquí (como lo tienes en otros ViewSets)
+        # ...
+        
+        return response
+
+    def _exportar_html(self, queryset, nombre_archivo):
+        """Método para exportar a HTML - ajusta según tu implementación existente"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='text/html')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.html"'
+        
+        # Tu código de generación HTML aquí (como lo tienes en otros ViewSets)
+        # ...
+        
+        return response
 
 class HorarioMedicoViewSet(viewsets.ModelViewSet):
     queryset = HorarioMedico.objects.select_related(
@@ -252,6 +809,42 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
         if hasattr(self.request.user, 'medico'):
             return queryset.filter(medico_especialidad__medico=self.request.user.medico)
         return queryset
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        medico = instance.medico_especialidad.medico
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó horario para médico",
+            modulo="horarios",
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        medico = instance.medico_especialidad.medico
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó horario de médico",
+            modulo="horarios",
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} actualizado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+        )
+
+    def perform_destroy(self, instance):
+        medico = instance.medico_especialidad.medico
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó horario de médico",
+            modulo="horarios",
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} eliminado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+        )
+        instance.delete()
 
 class HorariosDisponiblesMedicoLogueadoView(generics.ListAPIView):
     """
@@ -548,6 +1141,39 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
         # Admin: ver todas las citas
         return queryset
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Agendó nueva cita",
+            modulo="citas",
+            detalles=f"Cita para {instance.paciente.usuario.nombre} con Dr. {instance.medico_especialidad.medico.usuario.nombre} - {instance.fecha_cita} {instance.hora_cita}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó cita",
+            modulo="citas",
+            detalles=f"Cita {instance.id} actualizada - Estado: {instance.estado}"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Canceló/Eliminó cita",
+            modulo="citas",
+            detalles=f"Cita {instance.id} eliminada - Paciente: {instance.paciente.usuario.nombre}"
+        )
+        instance.delete()
+
     @action(detail=True, methods=['post'], url_path='cambiar-estado')
     def cambiar_estado(self, request, pk=None):
         cita = self.get_object()
@@ -559,8 +1185,18 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        estado_anterior = cita.estado
         cita.estado = nuevo_estado
         cita.save()
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Cambió estado de cita",
+            modulo="citas",
+            detalles=f"Cita {cita.id} cambió de {estado_anterior} a {nuevo_estado}"
+        )
         
         return Response({
             'detail': f'Estado de cita actualizado a {nuevo_estado}.',
@@ -588,6 +1224,28 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset
 
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Creó historia clínica",
+            modulo="historias_clinicas",
+            detalles=f"Historia clínica creada para {instance.paciente.usuario.nombre}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó historia clínica",
+            modulo="historias_clinicas",
+            detalles=f"Historia clínica {instance.id} actualizada"
+        )
+
 class ConsultaViewSet(viewsets.ModelViewSet):
     queryset = Consulta.objects.select_related(
         'historia_clinica__paciente__usuario', 'medico__usuario'
@@ -611,7 +1269,39 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             return queryset.filter(historia_clinica__paciente=user.paciente)
         return queryset
 
-"""
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Registró nueva consulta",
+            modulo="consultas",
+            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}..."
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó consulta",
+            modulo="consultas",
+            detalles=f"Consulta {instance.id} actualizada"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Eliminó consulta",
+            modulo="consultas",
+            detalles=f"Consulta {instance.id} eliminada"
+        )
+        instance.delete()
+
 class RegistroBackupViewSet(viewsets.ModelViewSet):
     queryset = RegistroBackup.objects.select_related('usuario_responsable').all().order_by('-fecha_backup')
     serializer_class = RegistroBackupSerializer
@@ -621,6 +1311,28 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre_archivo']
     ordering_fields = ['fecha_backup']
     ordering = ['-fecha_backup']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Creó registro de backup",
+            modulo="backups",
+            detalles=f"Backup {instance.nombre_archivo} - Tipo: {instance.tipo_backup}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó registro de backup",
+            modulo="backups",
+            detalles=f"Backup {instance.nombre_archivo} actualizado"
+        )
 
     @action(detail=False, methods=['post'], url_path='realizar-backup')
     def realizar_backup(self, request):
@@ -633,16 +1345,33 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             ubicacion_almacenamiento='/backups/'
         )
         
+        # Registrar inicio de backup
+        Bitacora.registrar_accion(
+            usuario=request.user,
+            request=request,
+            accion="Inició proceso de backup",
+            modulo="backups",
+            detalles=f"Backup {backup.nombre_archivo} iniciado"
+        )
+        
         # Simular proceso de backup
         backup.estado = 'Exitoso'
         backup.tamano_bytes = 1024000  # 1MB simulado
         backup.save()
         
+        # Registrar finalización de backup
+        Bitacora.registrar_accion(
+            usuario=request.user,
+            request=request,
+            accion="Completó proceso de backup",
+            modulo="backups",
+            detalles=f"Backup {backup.nombre_archivo} completado exitosamente"
+        )
+        
         return Response({
             'detail': 'Backup realizado exitosamente.',
             'backup': RegistroBackupSerializer(backup).data
         })
-"""
 
 class RegistroBackupViewSet(viewsets.ModelViewSet):
     queryset = RegistroBackup.objects.select_related('usuario_responsable').all().order_by('-fecha_backup')
@@ -1210,3 +1939,36 @@ class AutoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filterset_fields = ['marca', 'modelo']
     search_fields = ['marca', 'modelo']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Creó auto",
+            modulo="autos",
+            detalles=f"Auto {instance.marca} {instance.modelo} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó auto",
+            modulo="autos",
+            detalles=f"Auto {instance.marca} {instance.modelo} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Eliminó auto",
+            modulo="autos",
+            detalles=f"Auto {instance.marca} {instance.modelo} eliminado"
+        )
+        instance.delete()
