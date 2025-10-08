@@ -101,6 +101,28 @@ class MedicoEspecialidadSerializer(serializers.ModelSerializer):
         model = MedicoEspecialidad
         fields = ['id', 'medico', 'medico_nombre', 'especialidad', 'especialidad_nombre']
 
+class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
+    """
+    Serializer para select de MedicoEspecialidad
+    """
+    medico_nombre_completo = serializers.SerializerMethodField()
+    especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
+    especialidad_codigo = serializers.CharField(source='especialidad.codigo', read_only=True)
+
+    class Meta:
+        model = MedicoEspecialidad
+        fields = [
+            'id', 
+            'medico', 
+            'medico_nombre_completo',
+            'especialidad', 
+            'especialidad_nombre',
+            'especialidad_codigo'
+        ]
+
+    def get_medico_nombre_completo(self, obj):
+        return f"Dr. {obj.medico.usuario.nombre} {obj.medico.usuario.apellido}"
+
 class MedicoSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
     especialidades = EspecialidadSerializer(many=True, read_only=True)
