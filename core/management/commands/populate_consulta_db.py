@@ -20,7 +20,7 @@ class Command(BaseCommand):
         self.crear_historias_clinicas()
         self.crear_citas_ejemplo()
         self.crear_consultas_medicas()
-        self.crear_registros_backup()
+        #self.crear_registros_backup()
         self.crear_bitacora()
 
         self.stdout.write(self.style.SUCCESS("¡Datos del sistema generados exitosamente!"))
