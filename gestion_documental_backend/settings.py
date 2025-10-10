@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-@_zy*lwa!651h7gs-z7jwch_@n3#6iy+$4ijcmu=(_y3puso0w
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost:4200', 'api-gestion-documental-backend.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.4']
+ALLOWED_HOSTS = ['localhost:4200', 'abc-gestion-documental-backend.duckdns.org', 'localhost', '127.0.0.1', '0.0.0.0', '192.168.0.6', '192.168.0.4']
 CORS_ALLOWED_ORIGINS = [
     "https://gestion-documental-frontend.vercel.app",
     "http://localhost:4200",
@@ -68,7 +68,8 @@ DBBACKUP_CONNECTOR_MAPPING = {
 }
 
 # Directorio de backups con permisos adecuados
-BACKUP_DIR = '/var/backups/app_backups'
+# BACKUP_DIR = '/var/backups/app_backups'
+BACKUP_DIR = os.path.join(BASE_DIR, 'backups')
 
 # Asegurar que el directorio existe y tiene permisos
 if not os.path.exists(BACKUP_DIR):
@@ -240,7 +241,7 @@ CORS_ALLOW_METHODS = [
 # Si usas cookies/sessions
 CSRF_TRUSTED_ORIGINS = [
     "https://gestion-documental-frontend.vercel.app",
-    "https://api-gestion-documental-backend.duckdns.org",
+    "https://abc-gestion-documental-backend.duckdns.org",
 ]
 
 # Middleware adicional para headers
