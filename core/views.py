@@ -20,6 +20,8 @@ import subprocess
 from django.conf import settings
 from django.http import HttpResponse
 from django.core.files.storage import FileSystemStorage
+from shutil import which
+import platform
 
 from .models import *
 from .serializers import *
@@ -62,7 +64,6 @@ def login_personalizado(request):
             # Continuamos aunque falle la bitácora
         
         # Serializar datos del usuario
-        from .serializers import UsuarioSerializer
         user_data = UsuarioSerializer(user).data
         
         # Devolver respuesta similar a SimpleJWT
@@ -641,7 +642,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['fecha_hora', 'accion_realizada']
     ordering = ['-fecha_hora']
 
-    # ✅ EXPORTAR A PDF
+    # EXPORTAR A PDF
     @action(detail=False, methods=['get'], url_path='exportar-pdf')
     def exportar_pdf(self, request):
         """
@@ -661,7 +662,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
         # Usa tu método existente de exportación PDF
         return self._exportar_pdf(queryset, "Reporte_Bitacora")
 
-    # ✅ EXPORTAR A EXCEL
+    # EXPORTAR A EXCEL
     @action(detail=False, methods=['get'], url_path='exportar-excel')
     def exportar_excel(self, request):
         """
@@ -681,7 +682,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
         # Usa tu método existente de exportación Excel
         return self._exportar_excel(queryset, "Reporte_Bitacora")
 
-    # ✅ EXPORTAR A HTML
+    # EXPORTAR A HTML
     @action(detail=False, methods=['get'], url_path='exportar-html')
     def exportar_html(self, request):
         """
@@ -701,7 +702,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
         # Usa tu método existente de exportación HTML
         return self._exportar_html(queryset, "Reporte_Bitacora")
 
-    # ✅ ENDPOINT PARA VER DETALLES COMPLETOS
+    # ENDPOINT PARA VER DETALLES COMPLETOS
     @action(detail=True, methods=['get'], url_path='detalle-completo')
     def detalle_completo(self, request, pk=None):
         """
@@ -758,10 +759,9 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
                 return 'Navegador no identificado'
         return 'No disponible'
 
-    # ✅ MÉTODOS DE EXPORTACIÓN (ajusta según tus métodos existentes)
+    # MÉTODOS DE EXPORTACIÓN (ajusta según tus métodos existentes)
     def _exportar_pdf(self, queryset, nombre_archivo):
         """Método para exportar a PDF - ajusta según tu implementación existente"""
-        from django.http import HttpResponse
         response = HttpResponse(content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.pdf"'
         
@@ -772,7 +772,6 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
 
     def _exportar_excel(self, queryset, nombre_archivo):
         """Método para exportar a Excel - ajusta según tu implementación existente"""
-        from django.http import HttpResponse
         response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.xlsx"'
         
@@ -783,7 +782,6 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
 
     def _exportar_html(self, queryset, nombre_archivo):
         """Método para exportar a HTML - ajusta según tu implementación existente"""
-        from django.http import HttpResponse
         response = HttpResponse(content_type='text/html')
         response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}_{timezone.now().strftime("%Y%m%d_%H%M")}.html"'
         
@@ -1332,55 +1330,6 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             detalles=f"Backup {instance.nombre_archivo} actualizado"
         )
 
-    @action(detail=False, methods=['post'], url_path='realizar-backup')
-    def realizar_backup(self, request):
-        # Lógica para realizar backup (simulada)
-        backup = RegistroBackup.objects.create(
-            nombre_archivo=f"backup_{timezone.now().strftime('%Y%m%d_%H%M%S')}.sql",
-            usuario_responsable=request.user,
-            tipo_backup=request.data.get('tipo_backup', 'Completo'),
-            estado='En Progreso',
-            ubicacion_almacenamiento='/backups/'
-        )
-        
-        # Registrar inicio de backup
-        Bitacora.registrar_accion(
-            usuario=request.user,
-            request=request,
-            accion="Inició proceso de backup",
-            modulo="backups",
-            detalles=f"Backup {backup.nombre_archivo} iniciado"
-        )
-        
-        # Simular proceso de backup
-        backup.estado = 'Exitoso'
-        backup.tamano_bytes = 1024000  # 1MB simulado
-        backup.save()
-        
-        # Registrar finalización de backup
-        Bitacora.registrar_accion(
-            usuario=request.user,
-            request=request,
-            accion="Completó proceso de backup",
-            modulo="backups",
-            detalles=f"Backup {backup.nombre_archivo} completado exitosamente"
-        )
-        
-        return Response({
-            'detail': 'Backup realizado exitosamente.',
-            'backup': RegistroBackupSerializer(backup).data
-        })
-
-class RegistroBackupViewSet(viewsets.ModelViewSet):
-    queryset = RegistroBackup.objects.select_related('usuario_responsable').all().order_by('-fecha_backup')
-    serializer_class = RegistroBackupSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['tipo_backup', 'estado', 'usuario_responsable']
-    search_fields = ['nombre_archivo']
-    ordering_fields = ['fecha_backup']
-    ordering = ['-fecha_backup']
-
     def destroy(self, request, *args, **kwargs):
         """Sobrescribir delete para eliminar también el archivo físico"""
         try:
@@ -1432,7 +1381,6 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             db_settings = settings.DATABASES['default']
             
             # DETECCIÓN DE PLATAFORMA Y RUTA DE pg_dump
-            import platform
             sistema_operativo = platform.system()
             
             if sistema_operativo == 'Windows':
@@ -1449,9 +1397,10 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             # VERIFICACIÓN FINAL DE pg_dump
             if sistema_operativo != 'Windows':
                 # En Linux, verificar si pg_dump está en el PATH
-                which_result = subprocess.run(['which', 'pg_dump'], capture_output=True, text=True)
-                if which_result.returncode != 0:
-                    # Intentar rutas comunes en Linux
+                pg_dump_path = which('pg_dump')
+
+                if not pg_dump_path or not os.path.exists(pg_dump_path):
+                    # Intentar rutas comunes manualmente
                     rutas_linux = [
                         '/usr/bin/pg_dump',
                         '/usr/local/bin/pg_dump',
@@ -1464,7 +1413,7 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
                             pg_dump_path = ruta
                             break
                     else:
-                        # pg_dump no encontrado en Linux
+                        # pg_dump no encontrado
                         backup.estado = 'Fallido'
                         backup.notas = "pg_dump no encontrado en el sistema"
                         backup.save()
@@ -1654,7 +1603,6 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             db_settings = settings.DATABASES['default']
             
             # Detectar plataforma
-            import platform
             sistema_operativo = platform.system()
             
             if sistema_operativo == 'Windows':
@@ -1754,7 +1702,6 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             db_settings = settings.DATABASES['default']
             
             # Detectar plataforma
-            import platform
             sistema_operativo = platform.system()
             
             if sistema_operativo == 'Windows':
