@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.utils import timezone  # ← Esta línea es la que falta
 
 from .models import *
 
@@ -31,7 +32,7 @@ class RolSerializer(serializers.ModelSerializer):
         fields = ['id', 'nombre_rol', 'descripcion']
 
 class UsuarioSerializer(serializers.ModelSerializer):
-    # Lectura: objeto rol anidado (como “detalle”)
+    # Lectura: objeto rol anidado (como "detalle")
     rol = RolSerializer(read_only=True, source='id_rol')
     # Escritura: id del rol (FK)
     id_rol = serializers.PrimaryKeyRelatedField(
@@ -147,16 +148,163 @@ class MedicoSelectSerializer(serializers.ModelSerializer):
         model = Medico
         fields = ['usuario', 'nombre_completo', 'numero_licencia', 'estado', 'especialidades']
 
+# SERIALIZERS COMPLETOS PARA GESTIÓN DE PACIENTES
 class PacienteSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
+    nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    email = serializers.CharField(source='usuario.email', read_only=True)
+    telefono = serializers.CharField(source='usuario.telefono', read_only=True)
+    direccion = serializers.CharField(source='usuario.direccion', read_only=True)
+    fecha_nacimiento = serializers.DateField(source='usuario.fecha_nacimiento', read_only=True)
+    genero = serializers.CharField(source='usuario.genero', read_only=True)
+    
+    # Campos para escritura
+    id_usuario = serializers.PrimaryKeyRelatedField(
+        queryset=Usuario.objects.all(),
+        write_only=True,
+        source='usuario',
+        required=False
+    )
+
     class Meta:
         model = Paciente
         fields = [
-            'usuario', 'tipo_sangre', 'alergias', 'enfermedades_cronicas',
-            'medicamentos_actuales', 'contacto_emergencia_nombre',
-            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco',
-            'estado'
+            'usuario', 'id_usuario', 'nombre_completo', 'email', 'telefono', 
+            'direccion', 'fecha_nacimiento', 'genero', 'tipo_sangre', 'alergias', 
+            'enfermedades_cronicas', 'medicamentos_actuales', 'contacto_emergencia_nombre',
+            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado'
         ]
+        read_only_fields = ['usuario', 'nombre_completo', 'email', 'telefono', 
+                           'direccion', 'fecha_nacimiento', 'genero']
+
+    def create(self, validated_data):
+        usuario_data = validated_data.pop('usuario', None)
+        if usuario_data:
+            # Si se proporciona un usuario existente
+            paciente = Paciente.objects.create(usuario=usuario_data, **validated_data)
+        else:
+            # Crear nuevo usuario para el paciente
+            rol_paciente = Rol.objects.get(nombre_rol='Paciente')
+            usuario = Usuario.objects.create(
+                id_rol=rol_paciente,
+                **{k: v for k, v in validated_data.items() if hasattr(Usuario, k)}
+            )
+            paciente = Paciente.objects.create(usuario=usuario, **validated_data)
+        return paciente
+
+    def update(self, instance, validated_data):
+        usuario_data = validated_data.pop('usuario', None)
+        
+        # Actualizar campos del paciente
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Actualizar usuario si se proporciona
+        if usuario_data:
+            usuario = instance.usuario
+            for attr, value in usuario_data.items():
+                setattr(usuario, attr, value)
+            usuario.save()
+        
+        return instance
+
+class PacienteCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer específico para creación de pacientes
+    Incluye campos de usuario para crear ambos
+    """
+    email = serializers.EmailField(write_only=True, required=True)
+    password = serializers.CharField(write_only=True, required=True, min_length=6)
+    nombre = serializers.CharField(write_only=True, required=True)
+    apellido = serializers.CharField(write_only=True, required=True)
+    telefono = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    direccion = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    fecha_nacimiento = serializers.DateField(write_only=True, required=False)
+    genero = serializers.ChoiceField(
+        choices=Usuario.GENERO_CHOICES, 
+        write_only=True, 
+        required=False
+    )
+
+    class Meta:
+        model = Paciente
+        fields = [
+            'email', 'password', 'nombre', 'apellido', 'telefono', 'direccion',
+            'fecha_nacimiento', 'genero', 'tipo_sangre', 'alergias', 
+            'enfermedades_cronicas', 'medicamentos_actuales', 'contacto_emergencia_nombre',
+            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado'
+        ]
+
+    def create(self, validated_data):
+        # Extraer datos de usuario
+        usuario_data = {
+            'email': validated_data.pop('email'),
+            'password': validated_data.pop('password'),
+            'nombre': validated_data.pop('nombre'),
+            'apellido': validated_data.pop('apellido'),
+            'telefono': validated_data.pop('telefono', ''),
+            'direccion': validated_data.pop('direccion', ''),
+            'fecha_nacimiento': validated_data.pop('fecha_nacimiento', None),
+            'genero': validated_data.pop('genero', ''),
+        }
+        
+        # Crear usuario
+        rol_paciente = Rol.objects.get(nombre_rol='Paciente')
+        usuario = Usuario.objects.create_user(
+            id_rol=rol_paciente,
+            **usuario_data
+        )
+        
+        # Crear paciente
+        paciente = Paciente.objects.create(usuario=usuario, **validated_data)
+        return paciente
+
+class PacienteUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer específico para actualización de pacientes
+    Permite actualizar tanto datos del paciente como del usuario
+    """
+    nombre = serializers.CharField(source='usuario.nombre', required=False)
+    apellido = serializers.CharField(source='usuario.apellido', required=False)
+    telefono = serializers.CharField(source='usuario.telefono', required=False)
+    direccion = serializers.CharField(source='usuario.direccion', required=False)
+    fecha_nacimiento = serializers.DateField(source='usuario.fecha_nacimiento', required=False)
+    genero = serializers.ChoiceField(
+        choices=Usuario.GENERO_CHOICES, 
+        source='usuario.genero', 
+        required=False
+    )
+
+    class Meta:
+        model = Paciente
+        fields = [
+            'nombre', 'apellido', 'telefono', 'direccion', 'fecha_nacimiento', 'genero',
+            'tipo_sangre', 'alergias', 'enfermedades_cronicas', 'medicamentos_actuales',
+            'contacto_emergencia_nombre', 'contacto_emergencia_telefono', 
+            'contacto_emergencia_parentesco', 'estado'
+        ]
+
+    def update(self, instance, validated_data):
+        usuario_data = {}
+        
+        # Extraer datos de usuario si están presentes
+        if 'usuario' in validated_data:
+            usuario_data = validated_data.pop('usuario')
+        
+        # Actualizar campos del paciente
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Actualizar usuario si hay datos
+        if usuario_data:
+            usuario = instance.usuario
+            for attr, value in usuario_data.items():
+                setattr(usuario, attr, value)
+            usuario.save()
+        
+        return instance
 
 class PacienteSelectSerializer(serializers.ModelSerializer):
     """
@@ -164,10 +312,42 @@ class PacienteSelectSerializer(serializers.ModelSerializer):
     """
     usuario = UsuarioSelectSerializer(read_only=True)
     nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    email = serializers.CharField(source='usuario.email', read_only=True)
 
     class Meta:
         model = Paciente
-        fields = ['usuario', 'nombre_completo', 'estado']
+        fields = ['usuario', 'nombre_completo', 'email', 'estado', 'tipo_sangre']
+
+class PacienteResumenSerializer(serializers.ModelSerializer):
+    """
+    Serializer para resumen de pacientes (listados, dashboards)
+    """
+    nombre_completo = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    email = serializers.CharField(source='usuario.email', read_only=True)
+    telefono = serializers.CharField(source='usuario.telefono', read_only=True)
+    edad = serializers.SerializerMethodField()
+    tiene_alergias = serializers.SerializerMethodField()
+    tiene_enfermedades = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Paciente
+        fields = [
+            'usuario', 'nombre_completo', 'email', 'telefono', 'edad',
+            'tipo_sangre', 'estado', 'tiene_alergias', 'tiene_enfermedades'
+        ]
+
+    def get_edad(self, obj):
+        if obj.usuario.fecha_nacimiento:
+            today = timezone.now().date()
+            born = obj.usuario.fecha_nacimiento
+            return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        return None
+
+    def get_tiene_alergias(self, obj):
+        return bool(obj.alergias and obj.alergias.strip())
+
+    def get_tiene_enfermedades(self, obj):
+        return bool(obj.enfermedades_cronicas and obj.enfermedades_cronicas.strip())
 
 class AdministradorSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
@@ -176,7 +356,6 @@ class AdministradorSerializer(serializers.ModelSerializer):
         fields = ['usuario']
 
 class PerfilSerializer(serializers.ModelSerializer):
-    #tipo_usuario = serializers.CharField(source='tipo_usuario', read_only=True)
     tipo_usuario = serializers.CharField()
     datos_medico = serializers.SerializerMethodField()
     datos_paciente = serializers.SerializerMethodField()
@@ -281,14 +460,20 @@ class PermisoComponenteSerializer(serializers.ModelSerializer):
 class BitacoraSerializer(serializers.ModelSerializer):
     usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
     usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    usuario_apellido = serializers.CharField(source='usuario.apellido', read_only=True)
+    nombre_completo = serializers.SerializerMethodField()
 
     class Meta:
         model = Bitacora
         fields = [
-            'id', 'usuario', 'usuario_email', 'usuario_nombre', 'ip_address',
-            'accion_realizada', 'modulo_afectado', 'fecha_hora', 'detalles'
+            'id', 'usuario', 'usuario_email', 'usuario_nombre', 'usuario_apellido', 
+            'nombre_completo', 'ip_address', 'accion_realizada', 'modulo_afectado', 
+            'fecha_hora', 'detalles'
         ]
         read_only_fields = ['fecha_hora']
+
+    def get_nombre_completo(self, obj):
+        return f"{obj.usuario.nombre} {obj.usuario.apellido}"
 
 class HorarioMedicoSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source='medico_especialidad.medico.usuario.nombre', read_only=True)
@@ -379,11 +564,12 @@ class AgendaCitaSerializer(serializers.ModelSerializer):
 class HistoriaClinicaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='paciente.usuario.apellido', read_only=True)
+    paciente_email = serializers.CharField(source='paciente.usuario.email', read_only=True)
 
     class Meta:
         model = HistoriaClinica
         fields = [
-            'id', 'paciente', 'paciente_nombre', 'paciente_apellido',
+            'id', 'paciente', 'paciente_nombre', 'paciente_apellido', 'paciente_email',
             'fecha_creacion', 'observaciones_generales', 'activo'
         ]
         read_only_fields = ['fecha_creacion']
@@ -392,12 +578,13 @@ class ConsultaSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
     medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
     paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
+    paciente_apellido = serializers.CharField(source='historia_clinica.paciente.usuario.apellido', read_only=True)
 
     class Meta:
         model = Consulta
         fields = [
             'id', 'historia_clinica', 'medico', 'medico_nombre', 'medico_apellido',
-            'paciente_nombre', 'fecha_consulta', 'motivo_consulta', 'sintomas',
+            'paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
             'diagnostico', 'tratamiento', 'observaciones'
         ]
         read_only_fields = ['fecha_consulta']
@@ -405,15 +592,22 @@ class ConsultaSerializer(serializers.ModelSerializer):
 class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)
     usuario_responsable_nombre = serializers.CharField(source='usuario_responsable.nombre', read_only=True)
+    usuario_responsable_apellido = serializers.CharField(source='usuario_responsable.apellido', read_only=True)
+    nombre_completo_responsable = serializers.SerializerMethodField()
 
     class Meta:
         model = RegistroBackup
         fields = [
             'id', 'nombre_archivo', 'tamano_bytes', 'fecha_backup',
-            'usuario_responsable', 'usuario_responsable_email', 'usuario_responsable_nombre',
-            'tipo_backup', 'estado', 'ubicacion_almacenamiento', 'notas'
+            'usuario_responsable', 'usuario_responsable_email', 
+            'usuario_responsable_nombre', 'usuario_responsable_apellido',
+            'nombre_completo_responsable', 'tipo_backup', 'estado', 
+            'ubicacion_almacenamiento', 'notas'
         ]
         read_only_fields = ['fecha_backup']
+
+    def get_nombre_completo_responsable(self, obj):
+        return f"{obj.usuario_responsable.nombre} {obj.usuario_responsable.apellido}"
 
 
 #-----------------Prueba-------
