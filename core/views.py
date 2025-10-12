@@ -1,7 +1,6 @@
 from rest_framework import viewsets, status, generics, permissions
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.decorators import action
+from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -1459,6 +1458,65 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             'detail': f'Estado de cita actualizado a {nuevo_estado}.',
             'cita': AgendaCitaSerializer(cita).data
         })
+    
+    @action(detail=False, methods=['get'], url_path='horas-disponibles')
+    def horas_disponibles(self, request):
+        try:
+            medico_especialidad_id = int(request.query_params.get('medico_especialidad'))
+            fecha_str = request.query_params.get('fecha')  # Formato: 'YYYY-MM-DD'
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            return Response({'detail': 'Parámetros inválidos'}, status=400)
+
+        # CORRECCIÓN: Mapear día en inglés a español
+        dia_semana_ingles = fecha.strftime('%A')
+        dias_map = {
+            'Monday': 'Lunes',
+            'Tuesday': 'Martes', 
+            'Wednesday': 'Miércoles',
+            'Thursday': 'Jueves',
+            'Friday': 'Viernes',
+            'Saturday': 'Sábado',
+            'Sunday': 'Domingo'
+        }
+        dia_semana = dias_map.get(dia_semana_ingles, dia_semana_ingles)
+
+        # Buscar horarios disponibles
+        horarios = HorarioMedico.objects.filter(
+            medico_especialidad_id=medico_especialidad_id,
+            dia_semana=dia_semana,  # ← Ahora en español
+            activo=True
+        )
+
+        if not horarios.exists():
+            return Response({'horas_disponibles': []})
+
+        # Buscar horas ya ocupadas por otras citas
+        horas_ocupadas = set(
+            AgendaCita.objects.filter(
+                medico_especialidad_id=medico_especialidad_id,
+                fecha_cita=fecha,
+                estado__in=['pendiente', 'confirmada']  # Solo citas activas
+            ).values_list('hora_cita', flat=True)
+        )
+
+        # Crear lista de horas disponibles
+        bloques_disponibles = []
+
+        for horario in horarios:
+            hora_actual = datetime.combine(fecha, horario.hora_inicio)
+            hora_fin = datetime.combine(fecha, horario.hora_fin)
+
+            while hora_actual < hora_fin:
+                hora = hora_actual.time()
+                
+                # Solo agregar si no está ocupada
+                if hora not in horas_ocupadas:
+                    bloques_disponibles.append(hora.strftime('%H:%M'))
+                
+                hora_actual += timedelta(minutes=15)  # Bloques de 15 minutos
+
+        return Response({'horas_disponibles': sorted(bloques_disponibles)})
 
 class HistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = HistoriaClinica.objects.select_related('paciente__usuario').all().order_by('-fecha_creacion')

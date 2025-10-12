@@ -1,6 +1,8 @@
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.utils import timezone  # ← Esta línea es la que falta
+from datetime import time
+from django.utils import timezone
 
 from .models import *
 
@@ -560,6 +562,65 @@ class AgendaCitaSerializer(serializers.ModelSerializer):
             'fecha_creacion', 'fecha_actualizacion'
         ]
         read_only_fields = ['fecha_creacion', 'fecha_actualizacion']
+    
+    def validate(self, data):
+        """
+        Validar que:
+        - El médico atiende ese día (HorarioMedico).
+        - La hora está dentro de un horario válido.
+        - No existe otra cita en ese horario.
+        """
+        instance = self.instance  # En caso de actualización
+        medico_especialidad = data.get('medico_especialidad') or (instance.medico_especialidad if instance else None)
+        fecha_cita = data.get('fecha_cita') or (instance.fecha_cita if instance else None)
+        hora_cita = data.get('hora_cita') or (instance.hora_cita if instance else None)
+
+        # Si alguno falta, no validar aún (puede ser PATCH parcial)
+        if not all([medico_especialidad, fecha_cita, hora_cita]):
+            return data
+
+        # Obtener día de la semana en español con primera mayúscula (ej: 'Lunes')
+        dia_semana = fecha_cita.strftime('%A').capitalize()
+
+        # Buscar horarios del médico para ese día
+        horarios = HorarioMedico.objects.filter(
+            medico_especialidad=medico_especialidad,
+            dia_semana=dia_semana,
+            activo=True
+        )
+
+        if not horarios.exists():
+            raise serializers.ValidationError(
+                f"El médico no tiene horarios disponibles para el día {dia_semana}."
+            )
+
+        # Verificar que hora_cita esté dentro de al menos uno de los horarios
+        hora_valida = False
+        for h in horarios:
+            if h.hora_inicio <= hora_cita < h.hora_fin:
+                hora_valida = True
+                break
+
+        if not hora_valida:
+            raise serializers.ValidationError(
+                f"La hora {hora_cita} no está dentro de los horarios disponibles del médico para el día {dia_semana}."
+            )
+
+        # Verificar que no haya otra cita en ese mismo horario
+        conflicto = AgendaCita.objects.filter(
+            medico_especialidad=medico_especialidad,
+            fecha_cita=fecha_cita,
+            hora_cita=hora_cita
+        )
+        if instance:
+            conflicto = conflicto.exclude(id=instance.id)  # Excluirse a sí misma en actualización
+
+        if conflicto.exists():
+            raise serializers.ValidationError(
+                f"Ya existe una cita agendada para este médico en {fecha_cita} a las {hora_cita}."
+            )
+
+        return data
 
 class HistoriaClinicaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
