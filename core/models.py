@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.utils import timezone
 
 class Permiso(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
@@ -59,6 +60,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         return f"{self.nombre} {self.apellido} ({self.email})"
     
     @property
+    def nombre_completo(self):
+        """Retorna el nombre completo del usuario"""
+        return f"{self.nombre} {self.apellido}"
+    
+    @property
     def tipo_usuario(self):
         if hasattr(self, 'medico'):
             return 'Medico'
@@ -89,6 +95,15 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
             return permiso_componente
         except ComponenteUI.DoesNotExist:
             return False
+
+    @property
+    def edad(self):
+        """Calcula la edad del usuario basado en la fecha de nacimiento"""
+        if self.fecha_nacimiento:
+            today = timezone.now().date()
+            born = self.fecha_nacimiento
+            return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        return None
 
 class Rol(models.Model):
     nombre_rol = models.CharField(max_length=50, unique=True)
@@ -139,6 +154,54 @@ class Paciente(models.Model):
     def __str__(self):
         return f"{self.usuario.nombre} {self.usuario.apellido} - Paciente"
     
+    @property
+    def nombre_completo(self):
+        """Retorna el nombre completo del paciente"""
+        return self.usuario.nombre_completo
+    
+    @property
+    def email(self):
+        """Retorna el email del paciente"""
+        return self.usuario.email
+    
+    @property
+    def telefono(self):
+        """Retorna el teléfono del paciente"""
+        return self.usuario.telefono
+    
+    @property
+    def edad(self):
+        """Retorna la edad del paciente"""
+        return self.usuario.edad
+    
+    @property
+    def tiene_alergias(self):
+        """Indica si el paciente tiene alergias registradas"""
+        return bool(self.alergias and self.alergias.strip())
+    
+    @property
+    def tiene_enfermedades_cronicas(self):
+        """Indica si el paciente tiene enfermedades crónicas registradas"""
+        return bool(self.enfermedades_cronicas and self.enfermedades_cronicas.strip())
+    
+    @property
+    def tiene_medicamentos_actuales(self):
+        """Indica si el paciente tiene medicamentos actuales registrados"""
+        return bool(self.medicamentos_actuales and self.medicamentos_actuales.strip())
+    
+    @property
+    def tiene_contacto_emergencia(self):
+        """Indica si el paciente tiene contacto de emergencia registrado"""
+        return bool(self.contacto_emergencia_nombre and self.contacto_emergencia_telefono)
+    
+    class Meta:
+        verbose_name = "Paciente"
+        verbose_name_plural = "Pacientes"
+        indexes = [
+            models.Index(fields=['estado']),
+            models.Index(fields=['tipo_sangre']),
+        ]
+
 class Administrador(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, primary_key=True)
 

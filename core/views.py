@@ -277,13 +277,226 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         
         return Response({'detail': 'Password actualizado correctamente.'}, status=status.HTTP_200_OK)
 
-class PacienteViewSet(viewsets.ReadOnlyModelViewSet):
+# GESTIÓN COMPLETA DE PACIENTES
+class PacienteViewSet(viewsets.ModelViewSet):
     queryset = Paciente.objects.select_related('usuario').order_by('-usuario__id')
-    serializer_class = PacienteSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['estado', 'tipo_sangre']
-    search_fields = ['usuario__nombre', 'usuario__apellido', 'usuario__email']
+    search_fields = ['usuario__nombre', 'usuario__apellido', 'usuario__email', 'contacto_emergencia_nombre']
+    ordering_fields = ['usuario__nombre', 'usuario__apellido', 'estado', 'usuario__fecha_nacimiento']
+    ordering = ['usuario__nombre']
+
+    # ✅ AGREGAR ESTE MÉTODO PARA USAR EL SERIALIZER CORRECTO
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return PacienteCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return PacienteUpdateSerializer
+        return PacienteSerializer
+    
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
+            modulo="pacientes",
+            detalles=f"Paciente {instance.usuario.email} creado con estado: {instance.estado}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
+            modulo="pacientes",
+            detalles=f"Paciente {instance.usuario.email} actualizado - Estado: {instance.estado}"
+        )
+
+    def perform_destroy(self, instance):
+        """
+        Al eliminar un paciente también se elimina su usuario asociado.
+        """
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó paciente y usuario asociado: {instance.usuario.email}",
+            modulo="pacientes",
+            detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario"
+        )
+
+    # ✅ Eliminar el usuario asociado; por la relación OneToOne se elimina el paciente automáticamente
+        instance.usuario.delete()
+
+
+    @action(detail=True, methods=['post'], url_path='cambiar-estado')
+    def cambiar_estado(self, request, pk=None):
+        """
+        Cambiar estado del paciente (Activo/Inactivo)
+        """
+        paciente = self.get_object()
+        nuevo_estado = request.data.get('estado')
+        
+        if nuevo_estado not in ['Activo', 'Inactivo']:
+            return Response(
+                {'detail': 'Estado inválido. Use: Activo o Inactivo'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        estado_anterior = paciente.estado
+        paciente.estado = nuevo_estado
+        paciente.save()
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Cambió estado de paciente: {paciente.usuario.nombre}",
+            modulo="pacientes",
+            detalles=f"Paciente {paciente.usuario.email} cambió de {estado_anterior} a {nuevo_estado}"
+        )
+        
+        return Response({
+            'detail': f'Estado del paciente actualizado a {nuevo_estado}.',
+            'paciente': PacienteSerializer(paciente).data
+        })
+
+    @action(detail=True, methods=['get'], url_path='historial-citas')
+    def historial_citas(self, request, pk=None):
+        """
+        Obtener historial de citas del paciente
+        """
+        paciente = self.get_object()
+        citas = AgendaCita.objects.filter(
+            paciente=paciente
+        ).select_related(
+            'medico_especialidad__medico__usuario',
+            'medico_especialidad__especialidad'
+        ).order_by('-fecha_cita', '-hora_cita')
+        
+        page = self.paginate_queryset(citas)
+        if page is not None:
+            serializer = AgendaCitaSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = AgendaCitaSerializer(citas, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='historia-clinica')
+    def historia_clinica(self, request, pk=None):
+        """
+        Obtener historia clínica del paciente
+        """
+        paciente = self.get_object()
+        try:
+            historia = HistoriaClinica.objects.get(paciente=paciente, activo=True)
+            serializer = HistoriaClinicaSerializer(historia)
+            return Response(serializer.data)
+        except HistoriaClinica.DoesNotExist:
+            return Response(
+                {'detail': 'El paciente no tiene historia clínica activa.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'], url_path='exportar-pacientes')
+    def exportar_pacientes(self, request):
+        """
+        Exportar lista de pacientes a PDF/Excel
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó lista de pacientes",
+            modulo="pacientes",
+            detalles="Exportación de datos de pacientes"
+        )
+        
+        formato = request.query_params.get('formato', 'pdf')
+        nombre_archivo = f"Reporte_Pacientes_{timezone.now().strftime('%Y%m%d_%H%M')}"
+        
+        if formato.lower() == 'excel':
+            return self._exportar_excel(queryset, nombre_archivo)
+        elif formato.lower() == 'html':
+            return self._exportar_html(queryset, nombre_archivo)
+        else:
+            return self._exportar_pdf(queryset, nombre_archivo)
+
+    @action(detail=False, methods=['get'], url_path='estadisticas')
+    def estadisticas(self, request):
+        """
+        Estadísticas de pacientes
+        """
+        from django.db.models import Count, Q
+        
+        total_pacientes = Paciente.objects.count()
+        pacientes_activos = Paciente.objects.filter(estado='Activo').count()
+        pacientes_inactivos = Paciente.objects.filter(estado='Inactivo').count()
+        
+        # Conteo por tipo de sangre
+        tipos_sangre = Paciente.objects.exclude(
+            Q(tipo_sangre__isnull=True) | Q(tipo_sangre__exact='')
+        ).values('tipo_sangre').annotate(total=Count('tipo_sangre'))
+        
+        # Pacientes con alergias
+        pacientes_con_alergias = Paciente.objects.exclude(
+            Q(alergias__isnull=True) | Q(alergias__exact='')
+        ).count()
+        
+        # Pacientes con enfermedades crónicas
+        pacientes_con_enfermedades = Paciente.objects.exclude(
+            Q(enfermedades_cronicas__isnull=True) | Q(enfermedades_cronicas__exact='')
+        ).count()
+        
+        estadisticas = {
+            'total_pacientes': total_pacientes,
+            'pacientes_activos': pacientes_activos,
+            'pacientes_inactivos': pacientes_inactivos,
+            'pacientes_con_alergias': pacientes_con_alergias,
+            'pacientes_con_enfermedades_cronicas': pacientes_con_enfermedades,
+            'distribucion_tipos_sangre': list(tipos_sangre),
+            'porcentaje_activos': round((pacientes_activos / total_pacientes * 100) if total_pacientes > 0 else 0, 2)
+        }
+        
+        return Response(estadisticas)
+
+    # Métodos de exportación
+    def _exportar_pdf(self, queryset, nombre_archivo):
+        """Método para exportar a PDF"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}.pdf"'
+        
+        # Aquí iría tu lógica de generación de PDF
+        # Por ahora retornamos un response básico
+        return response
+
+    def _exportar_excel(self, queryset, nombre_archivo):
+        """Método para exportar a Excel"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}.xlsx"'
+        
+        # Aquí iría tu lógica de generación de Excel
+        # Por ahora retornamos un response básico
+        return response
+
+    def _exportar_html(self, queryset, nombre_archivo):
+        """Método para exportar a HTML"""
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='text/html')
+        response['Content-Disposition'] = f'attachment; filename="{nombre_archivo}.html"'
+        
+        # Aquí iría tu lógica de generación de HTML
+        # Por ahora retornamos un response básico
+        return response
 
 class PacienteSelectView(generics.ListAPIView):
     """
@@ -313,6 +526,52 @@ class PacienteSelectView(generics.ListAPIView):
         # Deshabilitar paginación
         self.pagination_class = None
         return super().list(request, *args, **kwargs)
+
+class PacienteBusquedaAvanzadaView(generics.ListAPIView):
+    """
+    Endpoint para búsqueda avanzada de pacientes
+    """
+    serializer_class = PacienteSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = Paciente.objects.select_related('usuario').all()
+        
+        # Filtros avanzados
+        estado = self.request.query_params.get('estado', None)
+        tipo_sangre = self.request.query_params.get('tipo_sangre', None)
+        tiene_alergias = self.request.query_params.get('tiene_alergias', None)
+        tiene_enfermedades = self.request.query_params.get('tiene_enfermedades', None)
+        search = self.request.query_params.get('search', None)
+        
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        
+        if tipo_sangre:
+            queryset = queryset.filter(tipo_sangre__iexact=tipo_sangre)
+        
+        if tiene_alergias:
+            if tiene_alergias.lower() == 'true':
+                queryset = queryset.filter(~Q(alergias__isnull=True) & ~Q(alergias__exact=''))
+            elif tiene_alergias.lower() == 'false':
+                queryset = queryset.filter(Q(alergias__isnull=True) | Q(alergias__exact=''))
+        
+        if tiene_enfermedades:
+            if tiene_enfermedades.lower() == 'true':
+                queryset = queryset.filter(~Q(enfermedades_cronicas__isnull=True) & ~Q(enfermedades_cronicas__exact=''))
+            elif tiene_enfermedades.lower() == 'false':
+                queryset = queryset.filter(Q(enfermedades_cronicas__isnull=True) | Q(enfermedades_cronicas__exact=''))
+        
+        if search:
+            queryset = queryset.filter(
+                Q(usuario__nombre__icontains=search) |
+                Q(usuario__apellido__icontains=search) |
+                Q(usuario__email__icontains=search) |
+                Q(contacto_emergencia_nombre__icontains=search) |
+                Q(tipo_sangre__icontains=search)
+            )
+        
+        return queryset
 
 class MedicoViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Medico.objects.select_related('usuario').order_by('-usuario__id')
