@@ -1102,6 +1102,58 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
         )
         instance.delete()
 
+        # ---------------- EXPORTAR HORARIOS MÉDICOS ----------------
+    @action(detail=False, methods=['get'], url_path='exportar-pdf')
+    def exportar_pdf(self, request):
+        queryset = self.get_queryset()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó horarios a PDF",
+            modulo="horarios",
+            detalles="Exportación de horarios médicos en formato PDF"
+        )
+        return self._exportar_pdf(queryset, "Reporte_Horarios_Medicos")
+
+    @action(detail=False, methods=['get'], url_path='exportar-excel')
+    def exportar_excel(self, request):
+        queryset = self.get_queryset()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó horarios a Excel",
+            modulo="horarios",
+            detalles="Exportación de horarios médicos en formato Excel"
+        )
+        return self._exportar_excel(queryset, "Reporte_Horarios_Medicos")
+
+    @action(detail=False, methods=['get'], url_path='exportar-html')
+    def exportar_html(self, request):
+        queryset = self.get_queryset()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Exportó horarios a HTML",
+            modulo="horarios",
+            detalles="Exportación de horarios médicos en formato HTML"
+        )
+        return self._exportar_html(queryset, "Reporte_Horarios_Medicos")
+
+    # ---------------- VER DETALLES DEL HORARIO ----------------
+    @action(detail=True, methods=['get'], url_path='detalles')
+    def ver_detalles(self, request, pk=None):
+        horario = self.get_object()
+        data = {
+            "id": horario.id,
+            "dia": horario.dia_semana,
+            "hora_inicio": str(horario.hora_inicio),
+            "hora_fin": str(horario.hora_fin),
+            "activo": horario.activo,
+            "medico": f"Dr. {horario.medico_especialidad.medico.usuario.nombre} {horario.medico_especialidad.medico.usuario.apellido}",
+            "especialidad": horario.medico_especialidad.especialidad.nombre,
+        }
+        return Response(data)
+
 class HorariosDisponiblesMedicoLogueadoView(generics.ListAPIView):
     """
     Endpoint para horarios disponibles del médico logueado
@@ -2234,3 +2286,5 @@ class AutoViewSet(viewsets.ModelViewSet):
             detalles=f"Auto {instance.marca} {instance.modelo} eliminado"
         )
         instance.delete()
+
+
