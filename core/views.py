@@ -286,7 +286,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['usuario__nombre', 'usuario__apellido', 'estado', 'usuario__fecha_nacimiento']
     ordering = ['usuario__nombre']
 
-    # ✅ AGREGAR ESTE MÉTODO PARA USAR EL SERIALIZER CORRECTO
+    # AGREGAR ESTE MÉTODO PARA USAR EL SERIALIZER CORRECTO
     def get_serializer_class(self):
         if self.action == 'create':
             return PacienteCreateSerializer
@@ -329,7 +329,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario"
         )
 
-    # ✅ Eliminar el usuario asociado; por la relación OneToOne se elimina el paciente automáticamente
+    # Eliminar el usuario asociado; por la relación OneToOne se elimina el paciente automáticamente
         instance.usuario.delete()
 
 

@@ -580,12 +580,22 @@ class AgendaCitaSerializer(serializers.ModelSerializer):
             return data
 
         # Obtener día de la semana en español con primera mayúscula (ej: 'Lunes')
-        dia_semana = fecha_cita.strftime('%A').capitalize()
+        dia_semana_ingles = fecha_cita.strftime('%A').capitalize()
+        dias_map = {
+            'Monday': 'Lunes',
+            'Tuesday': 'Martes', 
+            'Wednesday': 'Miércoles',
+            'Thursday': 'Jueves',
+            'Friday': 'Viernes',
+            'Saturday': 'Sábado',
+            'Sunday': 'Domingo'
+        }
+        dia_semana = dias_map.get(dia_semana_ingles, dia_semana_ingles)
 
         # Buscar horarios del médico para ese día
         horarios = HorarioMedico.objects.filter(
             medico_especialidad=medico_especialidad,
-            dia_semana=dia_semana,
+            dia_semana=dia_semana,  # Ahora busca 'Martes' en lugar de 'Tuesday'
             activo=True
         )
 
