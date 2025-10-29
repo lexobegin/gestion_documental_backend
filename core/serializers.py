@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.utils import timezone  # ← Esta línea es la que falta
+from django.utils import timezone
 
 from .models import *
 
@@ -574,20 +574,95 @@ class HistoriaClinicaSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['fecha_creacion']
 
+# SERIALIZER MEJORADO PARA CONSULTAS
 class ConsultaSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
     medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
     paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='historia_clinica.paciente.usuario.apellido', read_only=True)
+    paciente_email = serializers.CharField(source='historia_clinica.paciente.usuario.email', read_only=True)
+    cita_id = serializers.IntegerField(source='cita.id', read_only=True, allow_null=True)
+    cita_fecha = serializers.DateField(source='cita.fecha_cita', read_only=True, allow_null=True)
+    cita_hora = serializers.TimeField(source='cita.hora_cita', read_only=True, allow_null=True)
+    edad_paciente = serializers.SerializerMethodField()
+    imc = serializers.SerializerMethodField()
 
     class Meta:
         model = Consulta
         fields = [
             'id', 'historia_clinica', 'medico', 'medico_nombre', 'medico_apellido',
-            'paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
-            'diagnostico', 'tratamiento', 'observaciones'
+            'paciente_nombre', 'paciente_apellido', 'paciente_email', 'edad_paciente',
+            'cita', 'cita_id', 'cita_fecha', 'cita_hora',
+            'fecha_consulta', 'motivo_consulta', 'sintomas',
+            'diagnostico', 'tratamiento', 'observaciones',
+            # NUEVOS CAMPOS
+            'peso', 'altura', 'imc', 'presion_arterial', 'temperatura',
+            'frecuencia_cardiaca', 'frecuencia_respiratoria', 'saturacion_oxigeno',
+            'prescripciones', 'examenes_solicitados', 'proxima_cita', 'notas_privadas'
         ]
-        read_only_fields = ['fecha_consulta']
+        read_only_fields = ['fecha_consulta', 'edad_paciente', 'imc']
+
+    def get_edad_paciente(self, obj):
+        return obj.edad_paciente
+
+    def get_imc(self, obj):
+        return obj.imc
+
+    def validate(self, data):
+        """
+        Validaciones adicionales para consultas
+        """
+        # Validar que solo médicos puedan crear consultas
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'medico'):
+            if 'medico' in data and data['medico'] != request.user.medico:
+                raise serializers.ValidationError("Solo puede crear consultas para usted mismo.")
+        
+        # Validar que peso y altura sean positivos
+        if data.get('peso') and data['peso'] <= 0:
+            raise serializers.ValidationError({"peso": "El peso debe ser un valor positivo."})
+        
+        if data.get('altura') and data['altura'] <= 0:
+            raise serializers.ValidationError({"altura": "La altura debe ser un valor positivo."})
+        
+        return data
+
+class ConsultaCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer específico para creación de consultas
+    """
+    class Meta:
+        model = Consulta
+        fields = [
+            'historia_clinica', 'medico', 'cita',
+            'motivo_consulta', 'sintomas', 'diagnostico', 'tratamiento', 'observaciones',
+            'peso', 'altura', 'presion_arterial', 'temperatura',
+            'frecuencia_cardiaca', 'frecuencia_respiratoria', 'saturacion_oxigeno',
+            'prescripciones', 'examenes_solicitados', 'proxima_cita', 'notas_privadas'
+        ]
+
+    def create(self, validated_data):
+        # Asignar automáticamente el médico si no se proporciona
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'medico') and 'medico' not in validated_data:
+            validated_data['medico'] = request.user.medico
+        
+        return super().create(validated_data)
+
+class ConsultaResumenSerializer(serializers.ModelSerializer):
+    """
+    Serializer para resumen de consultas (listados)
+    """
+    paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre_completo', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre_completo', read_only=True)
+    fecha_consulta_corta = serializers.DateTimeField(source='fecha_consulta', format='%d/%m/%Y %H:%M', read_only=True)
+
+    class Meta:
+        model = Consulta
+        fields = [
+            'id', 'paciente_nombre', 'medico_nombre', 'fecha_consulta', 'fecha_consulta_corta',
+            'motivo_consulta', 'diagnostico', 'proxima_cita'
+        ]
 
 class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)

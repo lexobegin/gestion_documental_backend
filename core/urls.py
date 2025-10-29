@@ -27,7 +27,7 @@ router.register(r'bitacora', BitacoraViewSet)
 router.register(r'horarios-medico', HorarioMedicoViewSet)
 router.register(r'agenda-citas', AgendaCitaViewSet)
 router.register(r'historias-clinicas', HistoriaClinicaViewSet)
-router.register(r'consultas', ConsultaViewSet)
+router.register(r'consultas', ConsultaViewSet)  # MEJORADO CON NUEVOS ENDPOINTS
 router.register(r'backups', RegistroBackupViewSet)
 
 #---prueba---
@@ -62,13 +62,15 @@ urlpatterns = [
     # ENDPOINTS PARA HORARIOS DISPONIBLES
     path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
     path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
+    # NUEVO ENDPOINT SIMPLE PARA CONSULTAS - 
+    path('crear-consulta-simple/', crear_consulta_simple, name='crear-consulta-simple'),
 ]
 
-# URLs AUTOMÁTICAS DE PACIENTEVIEWSET (CRUD COMPLETO)
-# /pacientes/ - GET (listar), POST (crear)
-# /pacientes/{id}/ - GET (detalle), PUT (actualizar), PATCH (actualización parcial), DELETE (eliminar)
-# /pacientes/{id}/cambiar-estado/ - POST (cambiar estado)
-# /pacientes/{id}/historial-citas/ - GET (ver citas)
-# /pacientes/{id}/historia-clinica/ - GET (ver historia clínica)
-# /pacientes/exportar-pacientes/ - GET (exportar)
-# /pacientes/estadisticas/ - GET (estadísticas)
+# URLs AUTOMÁTICAS DE CONSULTAVIEWSET MEJORADO (CRUD COMPLETO + NUEVOS ENDPOINTS)
+# /consultas/ - GET (listar), POST (crear)
+# /consultas/{id}/ - GET (detalle), PUT (actualizar), PATCH (actualización parcial), DELETE (eliminar)
+# /consultas/por-cita/{cita_id}/ - GET (consulta por cita)
+# /consultas/por-paciente/{paciente_id}/ - GET (historial de paciente)
+# /consultas/hoy/ - GET (consultas del día para médico)
+# /consultas/crear-desde-cita/ - POST (crear desde cita existente)
+# /consultas/estadisticas/ - GET (estadísticas de consultas)
