@@ -1779,6 +1779,12 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         
         return Response(estadisticas)
 
+    @action(detail=False, methods=['get'], url_path='sin-paginacion')
+    def listar_sin_paginacion(self, request):
+        queryset = self.filter_queryset(self.get_queryset())  # Aplica filtros como ?estado=...
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 class HistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = HistoriaClinica.objects.select_related('paciente__usuario').all().order_by('-fecha_creacion')
     serializer_class = HistoriaClinicaSerializer
