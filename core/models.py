@@ -390,12 +390,28 @@ class HistoriaClinica(models.Model):
 class Consulta(models.Model):
     historia_clinica = models.ForeignKey(HistoriaClinica, on_delete=models.CASCADE)
     medico = models.ForeignKey(Medico, on_delete=models.CASCADE)
+    cita = models.ForeignKey(AgendaCita, on_delete=models.SET_NULL, null=True, blank=True)  # NUEVO: Relación con cita
     fecha_consulta = models.DateTimeField(auto_now_add=True)
     motivo_consulta = models.TextField()
     sintomas = models.TextField(blank=True, null=True)
     diagnostico = models.TextField(blank=True, null=True)
     tratamiento = models.TextField(blank=True, null=True)
     observaciones = models.TextField(blank=True, null=True)
+    
+    # NUEVOS CAMPOS PARA CONSULTA MÉDICA COMPLETA
+    peso = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)  # kg
+    altura = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)  # metros
+    presion_arterial = models.CharField(max_length=20, blank=True, null=True)  # "120/80"
+    temperatura = models.DecimalField(max_digits=4, decimal_places=2, blank=True, null=True)  # °C
+    frecuencia_cardiaca = models.PositiveIntegerField(blank=True, null=True)  # ppm
+    frecuencia_respiratoria = models.PositiveIntegerField(blank=True, null=True)  # rpm
+    saturacion_oxigeno = models.DecimalField(max_digits=4, decimal_places=1, blank=True, null=True)  # %
+    
+    # CAMPOS ADICIONALES
+    prescripciones = models.TextField(blank=True, null=True)  # Medicamentos recetados
+    examenes_solicitados = models.TextField(blank=True, null=True)  # Exámenes de laboratorio/imágenes
+    proxima_cita = models.DateField(blank=True, null=True)  # Próximo control
+    notas_privadas = models.TextField(blank=True, null=True)  # Notas solo para médico
 
     def __str__(self):
         return f"Consulta {self.historia_clinica.paciente} - {self.fecha_consulta}"
@@ -403,6 +419,19 @@ class Consulta(models.Model):
     class Meta:
         verbose_name = "Consulta"
         verbose_name_plural = "Consultas"
+        ordering = ['-fecha_consulta']
+
+    @property
+    def imc(self):
+        """Calcula el Índice de Masa Corporal"""
+        if self.peso and self.altura and self.altura > 0:
+            return round(self.peso / (self.altura ** 2), 2)
+        return None
+
+    @property
+    def edad_paciente(self):
+        """Retorna la edad del paciente al momento de la consulta"""
+        return self.historia_clinica.paciente.edad
 
 class RegistroBackup(models.Model):
     TIPO_BACKUP_CHOICES = [

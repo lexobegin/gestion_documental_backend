@@ -1510,65 +1510,274 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             'detail': f'Estado de cita actualizado a {nuevo_estado}.',
             'cita': AgendaCitaSerializer(cita).data
         })
+
+# VIEWSET MEJORADO PARA CONSULTAS
+class ConsultaViewSet(viewsets.ModelViewSet):
+    queryset = Consulta.objects.select_related(
+        'historia_clinica__paciente__usuario', 
+        'medico__usuario',
+        'cita'
+    ).all().order_by('-fecha_consulta')
     
-    @action(detail=False, methods=['get'], url_path='horas-disponibles')
-    def horas_disponibles(self, request):
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['historia_clinica', 'medico', 'cita']
+    search_fields = [
+        'historia_clinica__paciente__usuario__nombre',
+        'historia_clinica__paciente__usuario__apellido',
+        'motivo_consulta', 'diagnostico'
+    ]
+    ordering_fields = ['fecha_consulta', 'proxima_cita']
+    ordering = ['-fecha_consulta']
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ConsultaCreateSerializer
+        return ConsultaSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, 'medico'):
+            return queryset.filter(medico=user.medico)
+        elif hasattr(user, 'paciente'):
+            return queryset.filter(historia_clinica__paciente=user.paciente)
+        return queryset
+
+    def perform_create(self, serializer):
+        # Asignar automáticamente el médico si es un médico
+        if hasattr(self.request.user, 'medico'):
+            serializer.save(medico=self.request.user.medico)
+        else:
+            serializer.save()
+        
+        instance = serializer.instance
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Registró nueva consulta",
+            modulo="consultas",
+            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}..."
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó consulta",
+            modulo="consultas",
+            detalles=f"Consulta {instance.id} actualizada"
+        )
+
+    def perform_destroy(self, instance):
+        # Registrar en bitácora antes de eliminar
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Eliminó consulta",
+            modulo="consultas",
+            detalles=f"Consulta {instance.id} eliminada"
+        )
+        instance.delete()
+
+    # NUEVOS ENDPOINTS ESPECÍFICOS PARA CONSULTAS
+
+    @action(detail=False, methods=['get'], url_path='por-cita/<int:cita_id>/')
+    def por_cita(self, request, cita_id=None):
+        """
+        Obtener consulta por ID de cita
+        """
         try:
-            medico_especialidad_id = int(request.query_params.get('medico_especialidad'))
-            fecha_str = request.query_params.get('fecha')  # Formato: 'YYYY-MM-DD'
-            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-        except (TypeError, ValueError):
-            return Response({'detail': 'Parámetros inválidos'}, status=400)
+            consulta = Consulta.objects.get(cita_id=cita_id)
+            serializer = self.get_serializer(consulta)
+            return Response(serializer.data)
+        except Consulta.DoesNotExist:
+            return Response(
+                {'detail': 'No existe consulta para esta cita.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        # CORRECCIÓN: Mapear día en inglés a español
-        dia_semana_ingles = fecha.strftime('%A')
-        dias_map = {
-            'Monday': 'Lunes',
-            'Tuesday': 'Martes', 
-            'Wednesday': 'Miércoles',
-            'Thursday': 'Jueves',
-            'Friday': 'Viernes',
-            'Saturday': 'Sábado',
-            'Sunday': 'Domingo'
+    @action(detail=False, methods=['get'], url_path='por-paciente/<int:paciente_id>/')
+    def por_paciente(self, request, paciente_id=None):
+        """
+        Obtener historial completo de consultas de un paciente
+        """
+        try:
+            paciente = Paciente.objects.get(usuario__id=paciente_id)
+            consultas = Consulta.objects.filter(
+                historia_clinica__paciente=paciente
+            ).select_related(
+                'medico__usuario',
+                'cita'
+            ).order_by('-fecha_consulta')
+            
+            page = self.paginate_queryset(consultas)
+            if page is not None:
+                serializer = ConsultaResumenSerializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = ConsultaResumenSerializer(consultas, many=True)
+            return Response(serializer.data)
+            
+        except Paciente.DoesNotExist:
+            return Response(
+                {'detail': 'Paciente no encontrado.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'], url_path='hoy')
+    def consultas_hoy(self, request):
+        """
+        Obtener consultas del día para el médico logueado
+        """
+        if not hasattr(request.user, 'medico'):
+            return Response(
+                {'detail': 'Solo los médicos pueden acceder a este endpoint.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        hoy = timezone.now().date()
+        consultas = Consulta.objects.filter(
+            medico=request.user.medico,
+            fecha_consulta__date=hoy
+        ).select_related(
+            'historia_clinica__paciente__usuario',
+            'cita'
+        ).order_by('-fecha_consulta')
+        
+        serializer = ConsultaSerializer(consultas, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='crear-desde-cita')
+    def crear_desde_cita(self, request):
+        """
+        Crear consulta desde una cita existente
+        """
+        cita_id = request.data.get('cita_id')
+        if not cita_id:
+            return Response(
+                {'detail': 'El ID de la cita es requerido.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            cita = AgendaCita.objects.get(id=cita_id)
+            
+            # Verificar que la cita esté en estado adecuado
+            if cita.estado not in ['confirmada', 'realizada']:
+                return Response(
+                    {'detail': 'Solo se pueden crear consultas para citas confirmadas o realizadas.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verificar que no exista ya una consulta para esta cita
+            if Consulta.objects.filter(cita=cita).exists():
+                return Response(
+                    {'detail': 'Ya existe una consulta para esta cita.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Obtener o crear historia clínica del paciente
+            historia_clinica, created = HistoriaClinica.objects.get_or_create(
+                paciente=cita.paciente,
+                activo=True,
+                defaults={'observaciones_generales': 'Historia clínica creada automáticamente desde consulta.'}
+            )
+            
+            # Crear consulta
+            consulta_data = {
+                'historia_clinica': historia_clinica.id,
+                'cita': cita.id,
+                'motivo_consulta': cita.motivo or 'Consulta médica',
+                **request.data
+            }
+            
+            serializer = ConsultaCreateSerializer(data=consulta_data, context={'request': request})
+            if serializer.is_valid():
+                consulta = serializer.save()
+                
+                # Actualizar estado de la cita a "realizada"
+                cita.estado = 'realizada'
+                cita.save()
+                
+                # Registrar en bitácora
+                Bitacora.registrar_accion(
+                    usuario=request.user,
+                    request=request,
+                    accion="Creó consulta desde cita",
+                    modulo="consultas",
+                    detalles=f"Consulta creada desde cita {cita.id} para paciente {cita.paciente.usuario.nombre}"
+                )
+                
+                return Response(
+                    ConsultaSerializer(consulta).data,
+                    status=status.HTTP_201_CREATED
+                )
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except AgendaCita.DoesNotExist:
+            return Response(
+                {'detail': 'Cita no encontrada.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'], url_path='estadisticas')
+    def estadisticas(self, request):
+        """
+        Estadísticas de consultas
+        """
+        from django.db.models import Count, Avg
+        
+        # Filtros básicos
+        medico_id = request.query_params.get('medico_id')
+        fecha_inicio = request.query_params.get('fecha_inicio')
+        fecha_fin = request.query_params.get('fecha_fin')
+        
+        queryset = Consulta.objects.all()
+        
+        if medico_id:
+            queryset = queryset.filter(medico__usuario__id=medico_id)
+        
+        if fecha_inicio:
+            try:
+                fecha_ini = datetime.strptime(fecha_inicio, '%Y-%m-%d').date()
+                queryset = queryset.filter(fecha_consulta__date__gte=fecha_ini)
+            except ValueError:
+                pass
+        
+        if fecha_fin:
+            try:
+                fecha_end = datetime.strptime(fecha_fin, '%Y-%m-%d').date()
+                queryset = queryset.filter(fecha_consulta__date__lte=fecha_end)
+            except ValueError:
+                pass
+        
+        estadisticas = {
+            'total_consultas': queryset.count(),
+            'consultas_ultimo_mes': queryset.filter(
+                fecha_consulta__gte=timezone.now() - timedelta(days=30)
+            ).count(),
+            'promedio_consultas_dia': round(queryset.filter(
+                fecha_consulta__date=timezone.now().date()
+            ).count(), 2),
+            'medico_mas_consultas': queryset.values(
+                'medico__usuario__nombre', 'medico__usuario__apellido'
+            ).annotate(
+                total=Count('id')
+            ).order_by('-total').first(),
+            'diagnosticos_comunes': queryset.exclude(
+                Q(diagnostico__isnull=True) | Q(diagnostico__exact='')
+            ).values('diagnostico').annotate(
+                total=Count('id')
+            ).order_by('-total')[:10]
         }
-        dia_semana = dias_map.get(dia_semana_ingles, dia_semana_ingles)
-
-        # Buscar horarios disponibles
-        horarios = HorarioMedico.objects.filter(
-            medico_especialidad_id=medico_especialidad_id,
-            dia_semana=dia_semana,  # ← Ahora en español
-            activo=True
-        )
-
-        if not horarios.exists():
-            return Response({'horas_disponibles': []})
-
-        # Buscar horas ya ocupadas por otras citas
-        horas_ocupadas = set(
-            AgendaCita.objects.filter(
-                medico_especialidad_id=medico_especialidad_id,
-                fecha_cita=fecha,
-                estado__in=['pendiente', 'confirmada']  # Solo citas activas
-            ).values_list('hora_cita', flat=True)
-        )
-
-        # Crear lista de horas disponibles
-        bloques_disponibles = []
-
-        for horario in horarios:
-            hora_actual = datetime.combine(fecha, horario.hora_inicio)
-            hora_fin = datetime.combine(fecha, horario.hora_fin)
-
-            while hora_actual < hora_fin:
-                hora = hora_actual.time()
-                
-                # Solo agregar si no está ocupada
-                if hora not in horas_ocupadas:
-                    bloques_disponibles.append(hora.strftime('%H:%M'))
-                
-                hora_actual += timedelta(minutes=15)  # Bloques de 15 minutos
-
-        return Response({'horas_disponibles': sorted(bloques_disponibles)})
+        
+        return Response(estadisticas)
 
 class HistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = HistoriaClinica.objects.select_related('paciente__usuario').all().order_by('-fecha_creacion')
@@ -1612,60 +1821,6 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             modulo="historias_clinicas",
             detalles=f"Historia clínica {instance.id} actualizada"
         )
-
-class ConsultaViewSet(viewsets.ModelViewSet):
-    queryset = Consulta.objects.select_related(
-        'historia_clinica__paciente__usuario', 'medico__usuario'
-    ).all().order_by('-fecha_consulta')
-    serializer_class = ConsultaSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ['historia_clinica', 'medico']
-    ordering_fields = ['fecha_consulta']
-    ordering = ['-fecha_consulta']
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        user = self.request.user
-
-        if hasattr(user, 'medico'):
-            return queryset.filter(medico=user.medico)
-        elif hasattr(user, 'paciente'):
-            return queryset.filter(historia_clinica__paciente=user.paciente)
-        return queryset
-
-    def perform_create(self, serializer):
-        instance = serializer.save()
-        # Registrar en bitácora
-        Bitacora.registrar_accion(
-            usuario=self.request.user,
-            request=self.request,
-            accion="Registró nueva consulta",
-            modulo="consultas",
-            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}..."
-        )
-
-    def perform_update(self, serializer):
-        instance = serializer.save()
-        # Registrar en bitácora
-        Bitacora.registrar_accion(
-            usuario=self.request.user,
-            request=self.request,
-            accion="Actualizó consulta",
-            modulo="consultas",
-            detalles=f"Consulta {instance.id} actualizada"
-        )
-
-    def perform_destroy(self, instance):
-        # Registrar en bitácora antes de eliminar
-        Bitacora.registrar_accion(
-            usuario=self.request.user,
-            request=self.request,
-            accion="Eliminó consulta",
-            modulo="consultas",
-            detalles=f"Consulta {instance.id} eliminada"
-        )
-        instance.delete()
 
 class RegistroBackupViewSet(viewsets.ModelViewSet):
     queryset = RegistroBackup.objects.select_related('usuario_responsable').all().order_by('-fecha_backup')
@@ -2245,6 +2400,133 @@ class MedicoEspecialidadSelectView(generics.ListAPIView):
         # Deshabilitar paginación
         self.pagination_class = None
         return super().list(request, *args, **kwargs)
+
+    # NUEVO ENDPOINT SIMPLE PARA CONSULTAS - AGREGAR ANTES DE AutoViewSet
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_consulta_simple(request):
+    """
+    Endpoint SUPER simple para crear consultas
+    Acepta: paciente_id, paciente_email, o paciente_nombre
+    """
+    from .models import Paciente, HistoriaClinica, Consulta
+    from django.db.models import Q
+    
+    try:
+        # Verificar que el usuario sea médico
+        if not hasattr(request.user, 'medico'):
+            return Response(
+                {'detail': 'Solo los médicos pueden crear consultas'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Datos mínimos requeridos
+        paciente_id = request.data.get('paciente_id')
+        paciente_email = request.data.get('paciente_email')
+        paciente_nombre = request.data.get('paciente_nombre')
+        motivo_consulta = request.data.get('motivo_consulta')
+        
+        if not motivo_consulta:
+            return Response(
+                {'detail': 'motivo_consulta es requerido'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # BUSCAR PACIENTE POR DIFERENTES CAMPOS
+        if paciente_id:
+            # Buscar por ID
+            paciente = Paciente.objects.get(usuario_id=paciente_id)
+        elif paciente_email:
+            # Buscar por email
+            paciente = Paciente.objects.get(usuario__email=paciente_email)
+        elif paciente_nombre:
+            # Buscar por nombre o apellido
+            pacientes = Paciente.objects.filter(
+                Q(usuario__nombre__icontains=paciente_nombre) | 
+                Q(usuario__apellido__icontains=paciente_nombre)
+            )
+            if pacientes.count() == 1:
+                paciente = pacientes.first()
+            elif pacientes.count() > 1:
+                return Response({
+                    'detail': 'Múltiples pacientes encontrados. Usa email o ID.',
+                    'pacientes_encontrados': [
+                        {
+                            'id': p.usuario.id,
+                            'nombre': f"{p.usuario.nombre} {p.usuario.apellido}",
+                            'email': p.usuario.email
+                        } for p in pacientes
+                    ]
+                }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response(
+                    {'detail': 'Paciente no encontrado'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            return Response(
+                {'detail': 'Se requiere paciente_id, paciente_email o paciente_nombre'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Crear o obtener historia clínica automáticamente
+        historia_clinica, created = HistoriaClinica.objects.get_or_create(
+            paciente=paciente,
+            activo=True,
+            defaults={'observaciones_generales': 'Historia clínica creada automáticamente'}
+        )
+        
+        # Crear consulta con datos básicos
+        consulta = Consulta.objects.create(
+            historia_clinica=historia_clinica,
+            medico=request.user.medico,  # Médico logueado automáticamente
+            motivo_consulta=motivo_consulta,
+            sintomas=request.data.get('sintomas', ''),
+            diagnostico=request.data.get('diagnostico', ''),
+            tratamiento=request.data.get('tratamiento', ''),
+            observaciones=request.data.get('observaciones', ''),
+            peso=request.data.get('peso'),
+            altura=request.data.get('altura'),
+            presion_arterial=request.data.get('presion_arterial'),
+            temperatura=request.data.get('temperatura'),
+            frecuencia_cardiaca=request.data.get('frecuencia_cardiaca'),
+            frecuencia_respiratoria=request.data.get('frecuencia_respiratoria'),
+            saturacion_oxigeno=request.data.get('saturacion_oxigeno'),
+            prescripciones=request.data.get('prescripciones'),
+            examenes_solicitados=request.data.get('examenes_solicitados'),
+            proxima_cita=request.data.get('proxima_cita'),
+            notas_privadas=request.data.get('notas_privadas')
+        )
+        
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=request.user,
+            request=request,
+            accion="Creó consulta simple",
+            modulo="consultas",
+            detalles=f"Consulta {consulta.id} para {paciente.usuario.nombre} - Motivo: {motivo_consulta}"
+        )
+        
+        return Response({
+            'id': consulta.id,
+            'mensaje': 'Consulta creada exitosamente',
+            'paciente': f"{paciente.usuario.nombre} {paciente.usuario.apellido}",
+            'paciente_email': paciente.usuario.email,
+            'medico': f"{request.user.nombre} {request.user.apellido}",
+            'fecha': consulta.fecha_consulta,
+            'motivo': consulta.motivo_consulta
+        }, status=status.HTTP_201_CREATED)
+        
+    except Paciente.DoesNotExist:
+        return Response(
+            {'detail': 'Paciente no encontrado'}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'detail': f'Error creando consulta: {str(e)}'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
 #-----------------Prueba-------
 class AutoViewSet(viewsets.ModelViewSet):
