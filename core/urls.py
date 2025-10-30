@@ -27,7 +27,7 @@ router.register(r'bitacora', BitacoraViewSet)
 router.register(r'horarios-medico', HorarioMedicoViewSet)
 router.register(r'agenda-citas', AgendaCitaViewSet)
 router.register(r'historias-clinicas', HistoriaClinicaViewSet)
-router.register(r'consultas', ConsultaViewSet)  # MEJORADO CON NUEVOS ENDPOINTS
+router.register(r'consultas', ConsultaViewSet)
 router.register(r'backups', RegistroBackupViewSet)
 
 #---prueba---
@@ -62,8 +62,7 @@ urlpatterns = [
     # ENDPOINTS PARA HORARIOS DISPONIBLES
     path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
     path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
-    # NUEVO ENDPOINT SIMPLE PARA CONSULTAS - 
-    path('crear-consulta-simple/', crear_consulta_simple, name='crear-consulta-simple'),
+    
 ]
 
 # URLs AUTOMÁTICAS DE CONSULTAVIEWSET MEJORADO (CRUD COMPLETO + NUEVOS ENDPOINTS)
