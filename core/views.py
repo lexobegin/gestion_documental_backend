@@ -2335,6 +2335,185 @@ class AutoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['marca', 'modelo']
     search_fields = ['marca', 'modelo']
 
+# -------------------------------
+# EXÁMENES MÉDICOS 
+# -------------------------------
+
+class TipoExamenViewSet(viewsets.ModelViewSet):
+    queryset = TipoExamen.objects.filter(activo=True).order_by('nombre')
+    serializer_class = TipoExamenSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter]
+    search_fields = ['codigo', 'nombre']
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó tipo de examen: {instance.nombre}",
+            modulo="examenes",
+            detalles=f"Tipo examen {instance.codigo} creado"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Actualizó tipo de examen: {instance.nombre}",
+            modulo="examenes",
+            detalles=f"Tipo examen {instance.codigo} actualizado"
+        )
+
+    def perform_destroy(self, instance):
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Eliminó tipo de examen: {instance.nombre}",
+            modulo="examenes",
+            detalles=f"Tipo examen {instance.codigo} eliminado"
+        )
+        instance.delete()
+
+class SolicitudExamenViewSet(viewsets.ModelViewSet):
+    queryset = SolicitudExamen.objects.select_related(
+        'paciente__usuario',
+        'medico__usuario',
+        'tipo_examen',
+        'consulta'
+    ).all().order_by('-fecha_solicitud')
+    
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['estado', 'urgencia', 'paciente', 'medico', 'tipo_examen']
+    search_fields = ['paciente__usuario__nombre', 'tipo_examen__nombre']
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return SolicitudExamenCreateSerializer
+        return SolicitudExamenSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        if hasattr(user, 'paciente'):
+            return queryset.filter(paciente=user.paciente)
+        elif hasattr(user, 'medico'):
+            return queryset.filter(medico=user.medico)
+        return queryset
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Solicitó examen médico",
+            modulo="examenes",
+            detalles=f"Examen {instance.tipo_examen.nombre} solicitado para {instance.paciente.usuario.nombre_completo}"
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Actualizó solicitud de examen",
+            modulo="examenes",
+            detalles=f"Solicitud de examen {instance.id} actualizada"
+        )
+
+    def perform_destroy(self, instance):
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Canceló solicitud de examen",
+            modulo="examenes",
+            detalles=f"Examen {instance.tipo_examen.nombre} cancelado"
+        )
+        instance.delete()
+
+    @action(detail=False, methods=['post'], url_path='solicitar-desde-consulta')
+    def solicitar_desde_consulta(self, request):
+        serializer = SolicitudExamenCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            solicitud = serializer.save()
+            
+            Bitacora.registrar_accion(
+                usuario=self.request.user,
+                request=self.request,
+                accion="Solicitó examen desde consulta",
+                modulo="examenes",
+                detalles=f"Examen {solicitud.tipo_examen.nombre} solicitado en consulta {solicitud.consulta.id}"
+            )
+            
+            return Response(
+                SolicitudExamenSerializer(solicitud).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], url_path='por-consulta/(?P<consulta_id>[^/.]+)')
+    def por_consulta(self, request, consulta_id=None):
+        try:
+            consulta = Consulta.objects.get(id=consulta_id)
+            solicitudes = self.get_queryset().filter(consulta=consulta)
+            serializer = self.get_serializer(solicitudes, many=True)
+            return Response(serializer.data)
+        except Consulta.DoesNotExist:
+            return Response(
+                {'detail': 'Consulta no encontrada.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=False, methods=['get'], url_path='reporte-pdf')
+    def reporte_pdf(self, request):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Generó reporte PDF de exámenes",
+            modulo="examenes",
+            detalles="Reporte de solicitudes de exámenes en PDF"
+        )
+        
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="reporte_examenes_{timezone.now().strftime("%Y%m%d_%H%M")}.pdf"'
+        return response
+
+    @action(detail=True, methods=['post'], url_path='registrar-resultado')
+    def registrar_resultado(self, request, pk=None):
+        solicitud = self.get_object()
+        
+        solicitud.resultados = request.data.get('resultados', '')
+        solicitud.observaciones = request.data.get('observaciones', '')
+        solicitud.estado = 'completado'
+        solicitud.fecha_resultado = timezone.now()
+        solicitud.save()
+        
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Registró resultados de examen",
+            modulo="examenes",
+            detalles=f"Resultados registrados para examen {solicitud.id}"
+        )
+        
+        return Response(SolicitudExamenSerializer(solicitud).data)
+
+class TipoExamenSelectView(generics.ListAPIView):
+    serializer_class = TipoExamenSelectSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return TipoExamen.objects.filter(activo=True).order_by('nombre')
+    
+    def list(self, request, *args, **kwargs):
+        self.pagination_class = None
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         instance = serializer.save()
         # Registrar en bitácora
