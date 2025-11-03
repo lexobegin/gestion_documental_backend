@@ -70,6 +70,8 @@ urlpatterns = [
     path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
     path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
     
+    # NUEVO ENDPOINT PARA HISTORIAS CLÍNICAS POR PACIENTE
+    path('historias-clinicas/paciente/<int:paciente_id>/', historias_clinicas_por_paciente, name='historias-clinicas-por-paciente'),
 ]
 
 # URLs AUTOMÁTICAS DE CONSULTAVIEWSET MEJORADO (CRUD COMPLETO + NUEVOS ENDPOINTS)
