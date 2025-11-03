@@ -5,6 +5,10 @@ venv/
 
 backups/
 
+# Archivos generados por Celery Beat
+celerybeat-schedule*
+celerybeat.pid
+
 # Archivos compilados de Python
 __pycache__/
 *.py[cod]
