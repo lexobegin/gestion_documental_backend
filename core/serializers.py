@@ -658,7 +658,7 @@ class ConsultaSerializer(serializers.ModelSerializer):
             'paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
             'diagnostico', 'tratamiento', 'observaciones'
         ]
-        read_only_fields = ['id', 'fecha_consulta', 'historia_clinica', 'medico']
+        read_only_fields = ['id', 'fecha_consulta']
 
 class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)

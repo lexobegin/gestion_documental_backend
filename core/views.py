@@ -1593,8 +1593,14 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             return queryset.filter(paciente=user.paciente)
         # Médico: ver historias de sus pacientes
         elif hasattr(user, 'medico'):
-            # Aquí podrías agregar lógica para filtrar por pacientes del médico
-            return queryset
+            # Filtrar por pacientes que han tenido consultas con este médico
+            pacientes_del_medico = Consulta.objects.filter(
+                medico=user.medico
+            ).values_list('historia_clinica__paciente', flat=True).distinct()
+            
+            return queryset.filter(paciente__in=pacientes_del_medico)
+        
+        # Administrador: ve todas las historias clínicas
         return queryset
 
     def perform_create(self, serializer):
@@ -1617,6 +1623,75 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             accion="Actualizó historia clínica",
             modulo="historias_clinicas",
             detalles=f"Historia clínica {instance.id} actualizada"
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def historias_clinicas_por_paciente(request, paciente_id):
+    """
+    Endpoint para obtener todas las historias clínicas de un paciente específico
+    """
+    try:
+        
+        # Verificar que el paciente existe - usar usuario_id si es la primary key
+        try:
+            # Intentar buscar por el campo que sea primary key
+            paciente = Paciente.objects.get(usuario_id=paciente_id)
+        except Paciente.DoesNotExist:
+            # Si no existe, intentar con otros campos posibles
+            paciente = Paciente.objects.get(pk=paciente_id)
+        
+        user = request.user
+        
+        # Permisos según el tipo de usuario
+        if hasattr(user, 'paciente'):
+            # Paciente solo puede ver sus propias historias
+            if user.paciente.usuario_id != paciente.usuario_id:
+                return Response(
+                    {'error': 'No tiene permisos para ver estas historias clínicas'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        elif hasattr(user, 'medico'):
+            # Médico solo puede ver historias de pacientes que ha atendido
+            ha_atendido_paciente = Consulta.objects.filter(
+                medico=user.medico,
+                historia_clinica__paciente=paciente
+            ).exists()
+            
+            if not ha_atendido_paciente:
+                return Response(
+                    {'error': 'Solo puede ver historias clínicas de pacientes que ha atendido'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # Administradores pueden ver todas las historias
+        
+        # Obtener historias clínicas del paciente
+        historias = HistoriaClinica.objects.filter(
+            paciente=paciente
+        ).select_related('paciente__usuario').order_by('-fecha_creacion')
+        
+        serializer = HistoriaClinicaSerializer(historias, many=True)
+        
+        return Response({
+            'paciente': {
+                'id': paciente.usuario_id,  # Usar el campo correcto como ID
+                'nombre': f"{paciente.usuario.nombre} {paciente.usuario.apellido}",
+                'email': paciente.usuario.email
+            },
+            'historias_clinicas': serializer.data
+        })
+        
+    except Paciente.DoesNotExist:
+        return Response(
+            {'error': 'Paciente no encontrado'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'Error del servidor: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 class ConsultaViewSet(viewsets.ModelViewSet):
