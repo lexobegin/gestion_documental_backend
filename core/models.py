@@ -433,6 +433,64 @@ class RegistroBackup(models.Model):
         verbose_name = "Registro Backup"
         verbose_name_plural = "Registros Backup"
 
+# -------------------------------
+# EXÁMENES MÉDICOS 
+# -------------------------------
+
+class TipoExamen(models.Model):
+    URGENCIA_CHOICES = [
+        ('Rutina', 'Rutina'),
+        ('Urgente', 'Urgente'),
+        ('Emergencia', 'Emergencia'),
+    ]
+    
+    codigo = models.CharField(max_length=20, unique=True)
+    nombre = models.CharField(max_length=200)
+    descripcion = models.TextField(blank=True, null=True)
+    indicaciones = models.TextField(blank=True, null=True)
+    urgencia_default = models.CharField(max_length=15, choices=URGENCIA_CHOICES, default='Rutina')
+    activo = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.nombre} ({self.codigo})"
+
+class SolicitudExamen(models.Model):
+    ESTADO_CHOICES = [
+        ('solicitado', 'Solicitado'),
+        ('completado', 'Completado'),
+        ('cancelado', 'Cancelado'),
+    ]
+    
+    URGENCIA_CHOICES = [
+        ('Rutina', 'Rutina'),
+        ('Urgente', 'Urgente'),
+        ('Emergencia', 'Emergencia'),
+    ]
+    
+    # Relaciones
+    consulta = models.ForeignKey('Consulta', on_delete=models.CASCADE, related_name='solicitudes_examen')
+    paciente = models.ForeignKey('Paciente', on_delete=models.CASCADE)
+    medico = models.ForeignKey('Medico', on_delete=models.CASCADE)
+    tipo_examen = models.ForeignKey('TipoExamen', on_delete=models.CASCADE)
+    
+    # Campos principales
+    fecha_solicitud = models.DateTimeField(auto_now_add=True)
+    urgencia = models.CharField(max_length=15, choices=URGENCIA_CHOICES)
+    indicaciones_especificas = models.TextField(blank=True, null=True)
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='solicitado')
+    
+    # Resultados
+    resultados = models.TextField(blank=True, null=True)
+    fecha_resultado = models.DateTimeField(blank=True, null=True)
+    observaciones = models.TextField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Solicitud de Examen"
+        verbose_name_plural = "Solicitudes de Exámenes"
+
+    def __str__(self):
+        return f"Examen {self.tipo_examen.nombre} - {self.paciente}"        
+
 #-----------------Prueba-------
 class Auto(models.Model):
     marca = models.CharField(max_length=100)
