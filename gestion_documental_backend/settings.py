@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+from datetime import timedelta
+from celery.schedules import crontab
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -206,8 +208,6 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',],
 }
 
-from datetime import timedelta
-
 SIMPLE_JWT = {
     #'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
     'ACCESS_TOKEN_LIFETIME': timedelta(days=7),        # El token de acceso durará 7 días
@@ -260,3 +260,36 @@ class CorsMiddleware:
 
 # Agrega el middleware al final
 MIDDLEWARE.append('gestion_documental_backend.settings.CorsMiddleware')
+
+# Configuración Celery Beat para backups automáticos
+CELERY_BEAT_SCHEDULE = {
+    # Para testing - cada 3 minutos
+    #'backup-test-cada-3min': {
+    #    'task': 'core.tasks.realizar_backup_automatico',
+    #    'schedule': crontab(minute='*/3'),  # Cada 3 minutos
+    #},
+    
+    # Para producción - una vez al día
+    'backup-diario-2am': {
+        'task': 'core.tasks.realizar_backup_automatico',
+        'schedule': crontab(hour=2, minute=0),  # 2:00 AM diario
+    },
+    'limpieza-semanal': {
+        'task': 'core.tasks.realizar_limpieza_backups',
+        'schedule': 604800.0,  # 7 días en segundos
+        # O usar crontab:
+        # 'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Domingos a las 3:00 AM
+    },
+}
+
+# En settings.py - Agregar estas configuraciones
+#DBBACKUP_POSTGRESQL_BACKUP_CMD = r'C:\Program Files\PostgreSQL\16\bin\pg_dump.exe'
+#DBBACKUP_POSTGRESQL_RESTORE_CMD = r'C:\Program Files\PostgreSQL\16\bin\psql.exe'
+
+# O si no funciona, prueba con:
+DBBACKUP_POSTGRESQL_DUMP_CMD = r'C:\Program Files\PostgreSQL\16\bin\pg_dump.exe'
+DBBACKUP_POSTGRESQL_RESTORE_CMD = r'C:\Program Files\PostgreSQL\16\bin\psql.exe'
+
+# También agrega estas configuraciones adicionales
+DBBACKUP_POSTGRESQL_IGNORE_TABLES = []
+DBBACKUP_POSTGRESQL_EXTENSION = 'psql'

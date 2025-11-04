@@ -665,8 +665,12 @@ class HistoriaClinicaSerializer(serializers.ModelSerializer):
         read_only_fields = ['fecha_creacion']
 
 class ConsultaSerializer(serializers.ModelSerializer):
+    # Datos del médico
     medico_nombre = serializers.CharField(source='medico.usuario.nombre', read_only=True)
     medico_apellido = serializers.CharField(source='medico.usuario.apellido', read_only=True)
+
+    # Datos del paciente (desde historia clínica)
+    paciente = serializers.PrimaryKeyRelatedField(source='historia_clinica.paciente', read_only=True)  # ✅ ID real
     paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='historia_clinica.paciente.usuario.apellido', read_only=True)
     cliente = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -678,7 +682,9 @@ class ConsultaSerializer(serializers.ModelSerializer):
             'paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
             'diagnostico', 'tratamiento', 'observaciones', 'cliente'
         ]
-        read_only_fields = ['id', 'fecha_consulta', 'historia_clinica', 'medico']
+        
+        read_only_fields = ['id', 'fecha_consulta']
+
 
 class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_email = serializers.EmailField(source='usuario_responsable.email', read_only=True)
@@ -714,3 +720,36 @@ class AutoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Auto
         fields = '__all__'
+
+# -------------------------------
+# EXÁMENES MÉDICOS 
+# -------------------------------
+
+class TipoExamenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TipoExamen
+        fields = ['id', 'codigo', 'nombre', 'descripcion', 'indicaciones', 'urgencia_default', 'activo']
+
+class SolicitudExamenSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre_completo', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.usuario.nombre_completo', read_only=True)
+    tipo_examen_nombre = serializers.CharField(source='tipo_examen.nombre', read_only=True)
+
+    class Meta:
+        model = SolicitudExamen
+        fields = [
+            'id', 'consulta', 'paciente', 'paciente_nombre', 'medico', 'medico_nombre',
+            'tipo_examen', 'tipo_examen_nombre', 'fecha_solicitud', 'urgencia', 
+            'indicaciones_especificas', 'estado', 'resultados', 'fecha_resultado', 'observaciones'
+        ]
+        read_only_fields = ['fecha_solicitud']
+
+class SolicitudExamenCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SolicitudExamen
+        fields = ['consulta', 'paciente', 'medico', 'tipo_examen', 'urgencia', 'indicaciones_especificas']
+
+class TipoExamenSelectSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TipoExamen
+        fields = ['id', 'codigo', 'nombre']

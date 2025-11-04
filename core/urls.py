@@ -11,7 +11,7 @@ from rest_framework_simplejwt.views import (
 router = DefaultRouter()
 
 router.register(r'usuarios', UsuarioViewSet)
-router.register(r'pacientes', PacienteViewSet)  # AHORA CON CRUD COMPLETO
+router.register(r'pacientes', PacienteViewSet)
 router.register(r'medicos', MedicoViewSet)
 router.register(r'administradores', AdministradorViewSet)
 router.register(r'roles', RolViewSet)
@@ -34,6 +34,10 @@ router.register(r'clientes-suscriptores', ClienteSuscriptorViewSet)
 
 #---prueba---
 router.register(r'autos', AutoViewSet)
+
+# NUEVOS ROUTERS PARA EXÁMENES
+router.register(r'tipos-examen', TipoExamenViewSet)
+router.register(r'solicitudes-examen', SolicitudExamenViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -58,6 +62,9 @@ urlpatterns = [
     path('select/medicos/', MedicoSelectView.as_view(), name='select-medicos'),
     path('select/medico-especialidades/', MedicoEspecialidadSelectView.as_view(), name='select-medico-especialidades'),
 
+    # NUEVO ENDPOINT PARA SELECT DE TIPOS DE EXAMEN
+    path('select/tipos-examen/', TipoExamenSelectView.as_view(), name='select-tipos-examen'),
+
     # NUEVOS ENDPOINTS PARA GESTIÓN AVANZADA DE PACIENTES
     path('pacientes/busqueda-avanzada/', PacienteBusquedaAvanzadaView.as_view(), name='pacientes-busqueda-avanzada'),
     
@@ -65,6 +72,8 @@ urlpatterns = [
     path('horarios-disponibles/mi-horario/', HorariosDisponiblesMedicoLogueadoView.as_view(), name='mis-horarios-disponibles'),
     path('horarios-disponibles/', HorariosDisponiblesPorMedicoEspecialidadView.as_view(), name='horarios-disponibles'),
     
+    # NUEVO ENDPOINT PARA HISTORIAS CLÍNICAS POR PACIENTE
+    path('historias-clinicas/paciente/<int:paciente_id>/', historias_clinicas_por_paciente, name='historias-clinicas-por-paciente'),
 ]
 
 # URLs AUTOMÁTICAS DE CONSULTAVIEWSET MEJORADO (CRUD COMPLETO + NUEVOS ENDPOINTS)
@@ -75,3 +84,15 @@ urlpatterns = [
 # /consultas/hoy/ - GET (consultas del día para médico)
 # /consultas/crear-desde-cita/ - POST (crear desde cita existente)
 # /consultas/estadisticas/ - GET (estadísticas de consultas)
+
+# URLs AUTOMÁTICAS DE SOLICITUDEXAMENVIEWSET
+# /solicitudes-examen/ - GET (listar), POST (crear)
+# /solicitudes-examen/{id}/ - GET (detalle), PUT (actualizar), PATCH, DELETE
+# /solicitudes-examen/solicitar-desde-consulta/ - POST (solicitar desde consulta)
+# /solicitudes-examen/por-consulta/{id}/ - GET (exámenes por consulta)
+# /solicitudes-examen/reporte-pdf/ - GET (reporte PDF)
+# /solicitudes-examen/{id}/registrar-resultado/ - POST (registrar resultados)
+
+# URLs AUTOMÁTICAS DE TIPOEXAMENVIEWSET
+# /tipos-examen/ - GET (listar), POST (crear)
+# /tipos-examen/{id}/ - GET (detalle), PUT (actualizar), PATCH, DELETE
