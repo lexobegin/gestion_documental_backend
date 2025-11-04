@@ -228,7 +228,7 @@ class RegistroPacienteView(generics.CreateAPIView):
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related('id_rol').all()
     serializer_class = UsuarioSerializer
-    permission_classes = [IsAuthenticated]
+    #Spermission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['email', 'nombre', 'apellido', 'telefono', 'activo', 'genero', 'id_rol']
     search_fields = ['email', 'nombre', 'apellido', 'telefono']
@@ -244,7 +244,6 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         cliente_id_actual = self.request.user.cliente 
-        
         # Inyectar el cliente_id en el serializer antes de guardar
         # Asumiendo que 'cliente_id' es el nombre del campo en el modelo Usuario
         serializer.validated_data['cliente'] = cliente_id_actual

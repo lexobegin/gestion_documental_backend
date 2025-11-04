@@ -314,7 +314,7 @@ class Bitacora(models.Model):
         verbose_name_plural = "Bitácoras"
 
     @classmethod
-    def registrar_accion(cls, usuario, request, accion, modulo, cliente, detalles=None):
+    def registrar_accion(cls, usuario, request, accion, modulo, cliente=None, detalles=None):
         """
         Método helper para registrar acciones en la bitácora
         """
