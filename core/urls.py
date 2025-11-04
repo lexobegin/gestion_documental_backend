@@ -30,6 +30,8 @@ router.register(r'historias-clinicas', HistoriaClinicaViewSet)
 router.register(r'consultas', ConsultaViewSet)
 router.register(r'backups', RegistroBackupViewSet)
 
+router.register(r'clientes-suscriptores', ClienteSuscriptorViewSet)
+
 #---prueba---
 router.register(r'autos', AutoViewSet)
 

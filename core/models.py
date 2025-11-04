@@ -2,10 +2,21 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.db import models
 from django.utils import timezone
 
+
+class ClienteSuscriptor(models.Model):
+    nombre = models.CharField(max_length=200)
+    descripcion = models.TextField(blank=True, null=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    activo = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.nombre
+
 class Permiso(models.Model):
     nombre = models.CharField(max_length=100, unique=True)
     codigo = models.CharField(max_length=50, unique=True)
     descripcion = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.nombre} ({self.codigo})"
@@ -53,6 +64,8 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     USERNAME_FIELD = 'email'
     #REQUIRED_FIELDS = ['nombre', 'apellido', 'id_rol']
     REQUIRED_FIELDS = ['nombre']
+
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     objects = UsuarioManager()
 
@@ -109,6 +122,7 @@ class Rol(models.Model):
     nombre_rol = models.CharField(max_length=50, unique=True)
     descripcion = models.TextField(blank=True, null=True)
     permisos = models.ManyToManyField(Permiso, related_name='roles', blank=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.nombre_rol
@@ -117,6 +131,7 @@ class Medico(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, primary_key=True)
     numero_licencia = models.CharField(max_length=50, unique=True)
     firma_digital = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
     
     ESTADO_CHOICES = [
         ('Activo', 'Activo'),
@@ -144,7 +159,7 @@ class Paciente(models.Model):
     contacto_emergencia_nombre = models.CharField(max_length=200, blank=True, null=True)
     contacto_emergencia_telefono = models.CharField(max_length=20, blank=True, null=True)
     contacto_emergencia_parentesco = models.CharField(max_length=50, blank=True, null=True)
-
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
     ESTADO_CHOICES = [
         ('Activo', 'Activo'),
         ('Inactivo', 'Inactivo'),
@@ -204,7 +219,7 @@ class Paciente(models.Model):
 
 class Administrador(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE, primary_key=True)
-
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
     def __str__(self):
         return f"Administrador: {self.usuario.nombre} {self.usuario.apellido}"
 
@@ -212,6 +227,7 @@ class Especialidad(models.Model):
     codigo = models.CharField(max_length=20, unique=True)
     nombre = models.CharField(max_length=100, unique=True)
     descripcion = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.nombre} ({self.codigo})"
@@ -220,6 +236,7 @@ class MedicoEspecialidad(models.Model):
     id = models.AutoField(primary_key=True)
     medico = models.ForeignKey('Medico', on_delete=models.CASCADE)
     especialidad = models.ForeignKey('Especialidad', on_delete=models.CASCADE)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     class Meta:
         unique_together = ('medico', 'especialidad')
@@ -233,6 +250,7 @@ class MedicoEspecialidad(models.Model):
 class TipoComponente(models.Model):
     nombre = models.CharField(max_length=50, unique=True)
     descripcion = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.nombre
@@ -247,6 +265,7 @@ class ComponenteUI(models.Model):
     icono = models.CharField(max_length=100, blank=True, null=True)
     orden = models.IntegerField(default=0)
     activo = models.BooleanField(default=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.nombre_componente} ({self.codigo_componente})"
@@ -269,7 +288,7 @@ class PermisoComponente(models.Model):
     componente = models.ForeignKey(ComponenteUI, on_delete=models.CASCADE)
     accion_permitida = models.CharField(max_length=10, choices=ACCIONES_PERMITIDAS)
     condiciones = models.TextField(blank=True, null=True)  # JSON field para condiciones
-
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
     class Meta:
         unique_together = ('permiso', 'componente', 'accion_permitida')
         verbose_name = "Permiso Componente"
@@ -285,6 +304,7 @@ class Bitacora(models.Model):
     modulo_afectado = models.CharField(max_length=50)
     fecha_hora = models.DateTimeField(auto_now_add=True)
     detalles = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"{self.usuario.email} - {self.accion_realizada} - {self.fecha_hora}"
@@ -294,7 +314,7 @@ class Bitacora(models.Model):
         verbose_name_plural = "Bitácoras"
 
     @classmethod
-    def registrar_accion(cls, usuario, request, accion, modulo, detalles=None):
+    def registrar_accion(cls, usuario, request, accion, modulo, cliente, detalles=None):
         """
         Método helper para registrar acciones en la bitácora
         """
@@ -312,7 +332,8 @@ class Bitacora(models.Model):
             ip_address=ip_address,
             accion_realizada=accion,
             modulo_afectado=modulo,
-            detalles=detalles
+            detalles=detalles,
+            cliente=cliente
         )
 
 class HorarioMedico(models.Model):
@@ -332,6 +353,7 @@ class HorarioMedico(models.Model):
     hora_fin = models.TimeField()
     activo = models.BooleanField(default=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     class Meta:
         unique_together = ('medico_especialidad', 'dia_semana', 'hora_inicio', 'hora_fin')
@@ -358,6 +380,7 @@ class AgendaCita(models.Model):
     notas = models.TextField(blank=True, null=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         medico_esp = self.medico_especialidad
@@ -372,6 +395,7 @@ class HistoriaClinica(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     observaciones_generales = models.TextField(blank=True, null=True)
     activo = models.BooleanField(default=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     class Meta:
         constraints = [
@@ -396,6 +420,7 @@ class Consulta(models.Model):
     diagnostico = models.TextField(blank=True, null=True)
     tratamiento = models.TextField(blank=True, null=True)
     observaciones = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"Consulta {self.historia_clinica.paciente} - {self.fecha_consulta}"
@@ -425,6 +450,7 @@ class RegistroBackup(models.Model):
     estado = models.CharField(max_length=15, choices=ESTADO_CHOICES)
     ubicacion_almacenamiento = models.CharField(max_length=500, blank=True, null=True)
     notas = models.TextField(blank=True, null=True)
+    cliente = models.ForeignKey(ClienteSuscriptor, null=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return f"Backup {self.nombre_archivo} - {self.fecha_backup}"
