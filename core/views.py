@@ -25,6 +25,7 @@ import platform
 from .models import *
 from .serializers import *
 
+
 # VISTA PERSONALIZADA DE LOGIN
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -56,7 +57,8 @@ def login_personalizado(request):
                     ip_address=get_client_ip(request),
                     accion_realizada='Inicio de sesión exitoso',
                     modulo_afectado='autenticacion',
-                    detalles=f'Usuario {email} inició sesión correctamente'
+                    detalles=f'Usuario {email} inició sesión correctamente',
+                    cliente=user.cliente
                 )
         except Exception as e:
             print(f"Error al registrar en bitácora: {str(e)}")
@@ -81,11 +83,12 @@ def login_personalizado(request):
                     ip_address=get_client_ip(request),
                     accion_realizada='Intento fallido de inicio de sesión',
                     modulo_afectado='autenticacion',
-                    detalles=f'Intento fallido para usuario: {email}'
+                    detalles=f'Intento fallido para usuario: {email}',
+                    cliente=usuario_admin.cliente
                 )
         except Exception as e:
             print(f"Error al registrar intento fallido: {str(e)}")
-        
+        # Continuamos aunque falle la bitácora
         return Response(
             {'detail': 'Credenciales inválidas'}, 
             status=status.HTTP_401_UNAUTHORIZED
@@ -116,7 +119,8 @@ def logout_personalizado(request):
             ip_address=get_client_ip(request),
             accion_realizada='Cierre de sesión exitoso',
             modulo_afectado='autenticacion',
-            detalles=f'Usuario {request.user.email} cerró sesión correctamente'
+            detalles=f'Usuario {request.user.email} cerró sesión correctamente',
+            cliente=request.user.cliente
         )
         
         return Response({
@@ -130,7 +134,8 @@ def logout_personalizado(request):
             ip_address=get_client_ip(request),
             accion_realizada='Error en cierre de sesión',
             modulo_afectado='autenticacion',
-            detalles=f'Error al cerrar sesión: {str(e)}'
+            detalles=f'Error al cerrar sesión: {str(e)}',
+            cliente=request.user.cliente
         )
         
         return Response({
@@ -162,7 +167,12 @@ class PermisoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre', 'codigo']
     search_fields = ['nombre', 'codigo', 'descripcion']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente=cliente_id_actual)
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -170,7 +180,8 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} creado"
+            detalles=f"Permiso {instance.codigo} creado",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -181,7 +192,8 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} actualizado"
+            detalles=f"Permiso {instance.codigo} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -191,7 +203,8 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} eliminado"
+            detalles=f"Permiso {instance.codigo} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -200,6 +213,7 @@ class RegistroPacienteView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -207,28 +221,41 @@ class RegistroPacienteView(generics.CreateAPIView):
             request=self.request,
             accion="Registro de nuevo paciente",
             modulo="pacientes",
-            detalles=f"Paciente {instance.email} registrado en el sistema"
+            detalles=f"Paciente {instance.email} registrado en el sistema",
+            cliente=self.request.user.cliente
         )
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related('id_rol').all()
     serializer_class = UsuarioSerializer
-    permission_classes = [IsAuthenticated]
+    #Spermission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['email', 'nombre', 'apellido', 'telefono', 'activo', 'genero', 'id_rol']
     search_fields = ['email', 'nombre', 'apellido', 'telefono']
     ordering_fields = ['id', 'email', 'nombre', 'apellido', 'activo']
     ordering = ['-id']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        
+        return Usuario.objects.select_related('id_rol').filter(
+            cliente_id=cliente_id_actual
+        )
+
     def perform_create(self, serializer):
+        cliente_id_actual = self.request.user.cliente 
+        # Inyectar el cliente_id en el serializer antes de guardar
+        # Asumiendo que 'cliente_id' es el nombre del campo en el modelo Usuario
+        serializer.validated_data['cliente'] = cliente_id_actual
         instance = serializer.save()
-        # Registrar en bitácora
+        #Registrar en bitácora
         Bitacora.registrar_accion(
             usuario=self.request.user,
             request=self.request,
             accion=f"Creó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} creado con rol {instance.id_rol.nombre_rol}"
+            detalles=f"Usuario {instance.nombre} {instance.apellido} creado con rol {instance.id_rol.nombre_rol}",
+            cliente=cliente_id_actual
         )
 
     def perform_update(self, serializer):
@@ -239,7 +266,8 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} actualizado"
+            detalles=f"Usuario {instance.nombre} {instance.apellido} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -249,7 +277,8 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} eliminado"
+            detalles=f"Usuario {instance.nombre} {instance.apellido} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -271,7 +300,8 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Cambió password de usuario: {user.email}",
             modulo="usuarios",
-            detalles="Contraseña actualizada"
+            detalles="Contraseña actualizada",
+            cliente=self.request.user.cliente
         )
         
         return Response({'detail': 'Password actualizado correctamente.'}, status=status.HTTP_200_OK)
@@ -286,6 +316,13 @@ class PacienteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['usuario__nombre', 'usuario__apellido', 'estado', 'usuario__fecha_nacimiento']
     ordering = ['usuario__nombre']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        queryset = Paciente.objects.select_related('usuario').filter(
+            cliente_id=cliente_id_actual
+        ).order_by('-usuario__id')
+        return queryset
+
     # AGREGAR ESTE MÉTODO PARA USAR EL SERIALIZER CORRECTO
     def get_serializer_class(self):
         if self.action == 'create':
@@ -295,6 +332,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
         return PacienteSerializer
     
     def perform_create(self, serializer):
+        cliente_id_actual = self.request.user.cliente 
+        serializer.validated_data['cliente'] = cliente_id_actual
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -302,7 +341,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.email} creado con estado: {instance.estado}"
+            detalles=f"Paciente {instance.usuario.email} creado con estado: {instance.estado}",
+            cliente=cliente_id_actual
         )
 
     def perform_update(self, serializer):
@@ -313,7 +353,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.email} actualizado - Estado: {instance.estado}"
+            detalles=f"Paciente {instance.usuario.email} actualizado - Estado: {instance.estado}",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -326,7 +367,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó paciente y usuario asociado: {instance.usuario.email}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario"
+            detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario",
+            cliente=self.request.user.cliente
         )
 
     # Eliminar el usuario asociado; por la relación OneToOne se elimina el paciente automáticamente
@@ -357,7 +399,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Cambió estado de paciente: {paciente.usuario.nombre}",
             modulo="pacientes",
-            detalles=f"Paciente {paciente.usuario.email} cambió de {estado_anterior} a {nuevo_estado}"
+            detalles=f"Paciente {paciente.usuario.email} cambió de {estado_anterior} a {nuevo_estado}",
+            cliente=self.request.user.cliente
         )
         
         return Response({
@@ -415,7 +458,8 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó lista de pacientes",
             modulo="pacientes",
-            detalles="Exportación de datos de pacientes"
+            detalles="Exportación de datos de pacientes",
+            cliente=self.request.user.cliente
         )
         
         formato = request.query_params.get('formato', 'pdf')
@@ -503,11 +547,13 @@ class PacienteSelectView(generics.ListAPIView):
     """
     serializer_class = PacienteSelectSerializer
     permission_classes = [IsAuthenticated]
-    
+
     def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
         queryset = Paciente.objects.select_related('usuario').filter(
             usuario__activo=True,
-            estado='Activo'
+            estado='Activo',
+            cliente_id=cliente_id_actual
         ).order_by('usuario__nombre', 'usuario__apellido')
         
         # Filtro por nombre o apellido
@@ -534,7 +580,10 @@ class PacienteBusquedaAvanzadaView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        queryset = Paciente.objects.select_related('usuario').all()
+        cliente_id_actual = self.request.user.cliente
+        queryset = Paciente.objects.select_related('usuario').filter(
+            usuario__cliente_id=cliente_id_actual
+        )
         
         # Filtros avanzados
         estado = self.request.query_params.get('estado', None)
@@ -580,6 +629,24 @@ class MedicoViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['estado', 'especialidades']
     search_fields = ['usuario__nombre', 'usuario__apellido', 'numero_licencia']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+    
+    def perform_create(self, serializer):
+        cliente_id_actual = self.request.user.cliente 
+        serializer.validated_data['cliente'] = cliente_id_actual
+        instance = serializer.save()
+        # Registrar en bitácora
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion=f"Creó médico: {instance.usuario.nombre} {instance.usuario.apellido}",
+            modulo="médicos",
+            detalles=f"Médico {instance.usuario.email} creado con estado: {instance.estado}",
+            cliente=cliente_id_actual
+        )
+
 class MedicoSelectView(generics.ListAPIView):
     """
     Endpoint para select de médicos - sin paginación
@@ -588,9 +655,11 @@ class MedicoSelectView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
         queryset = Medico.objects.select_related('usuario').prefetch_related('especialidades').filter(
             usuario__activo=True,
-            estado='Activo'
+            estado='Activo',
+            cliente_id=cliente_id_actual
         ).order_by('usuario__nombre', 'usuario__apellido')
         
         # Filtro por nombre, apellido o especialidad
@@ -620,6 +689,10 @@ class AdministradorViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AdministradorSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+
 class MiPerfilView(generics.RetrieveUpdateAPIView):
     serializer_class = PerfilSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -646,7 +719,12 @@ class RolViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre_rol']
     search_fields = ['nombre_rol', 'descripcion']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -654,7 +732,8 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} creado"
+            detalles=f"Rol {instance.nombre_rol} creado",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -665,7 +744,8 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} actualizado"
+            detalles=f"Rol {instance.nombre_rol} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -675,7 +755,8 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} eliminado"
+            detalles=f"Rol {instance.nombre_rol} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -710,7 +791,9 @@ class RolViewSet(viewsets.ModelViewSet):
                 request=self.request,
                 accion=f"Actualizó permisos del rol: {rol.nombre_rol}",
                 modulo="roles",
-                detalles=f"Permisos modificados: {len(permisos_nuevos - permisos_anteriores)} agregados, {len(permisos_anteriores - permisos_nuevos)} removidos"
+                detalles=f"Permisos modificados: {len(permisos_nuevos - permisos_anteriores)} agregados, {len(permisos_anteriores - permisos_nuevos)} removidos",
+                cliente=self.request.user.cliente
+            
             )
             
             return Response({'detail': 'Permisos actualizados correctamente.'})
@@ -723,7 +806,12 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre']
     search_fields = ['nombre', 'codigo', 'descripcion']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -731,7 +819,8 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} creada"
+            detalles=f"Especialidad {instance.codigo} creada",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -742,7 +831,8 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} actualizada"
+            detalles=f"Especialidad {instance.codigo} actualizada",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -752,7 +842,8 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} eliminada"
+            detalles=f"Especialidad {instance.codigo} eliminada",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -775,7 +866,12 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['nombre', 'descripcion']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -783,7 +879,8 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} creado"
+            detalles=f"Tipo componente {instance.nombre} creado",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -794,7 +891,8 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} actualizado"
+            detalles=f"Tipo componente {instance.nombre} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -804,7 +902,8 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} eliminado"
+            detalles=f"Tipo componente {instance.nombre} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -817,7 +916,12 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre_componente', 'codigo_componente', 'modulo']
     ordering_fields = ['orden', 'nombre_componente']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(cliente_id=cliente_id_actual)
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -825,7 +929,8 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} creado"
+            detalles=f"Componente {instance.codigo_componente} creado",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -836,7 +941,8 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} actualizado"
+            detalles=f"Componente {instance.codigo_componente} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -846,7 +952,8 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} eliminado"
+            detalles=f"Componente {instance.codigo_componente} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -857,7 +964,14 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['permiso', 'componente', 'accion_permitida']
 
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(
+            cliente_id=cliente_id_actual
+        )
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -865,7 +979,8 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} asignado"
+            detalles=f"Permiso {instance.accion_permitida} asignado",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -876,7 +991,8 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} actualizado"
+            detalles=f"Permiso {instance.accion_permitida} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -886,7 +1002,8 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} eliminado"
+            detalles=f"Permiso {instance.accion_permitida} eliminado",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -899,6 +1016,12 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['accion_realizada', 'modulo_afectado', 'usuario__email', 'detalles']
     ordering_fields = ['fecha_hora', 'accion_realizada']
     ordering = ['-fecha_hora']
+
+    def get_queryset(self):
+        cliente_id_actual = self.request.user.cliente
+        return super().get_queryset().filter(
+            cliente_id=cliente_id_actual
+        )
 
     # EXPORTAR A PDF
     @action(detail=False, methods=['get'], url_path='exportar-pdf')
@@ -914,7 +1037,8 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a PDF",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato PDF"
+            detalles="Exportación de registros de bitácora en formato PDF",
+            cliente=self.request.user.cliente
         )
         
         # Usa tu método existente de exportación PDF
@@ -934,7 +1058,8 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a Excel",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato Excel"
+            detalles="Exportación de registros de bitácora en formato Excel",
+            cliente=self.request.user.cliente
         )
         
         # Usa tu método existente de exportación Excel
@@ -954,7 +1079,8 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a HTML",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato HTML"
+            detalles="Exportación de registros de bitácora en formato HTML",
+            cliente=self.request.user.cliente
         )
         
         # Usa tu método existente de exportación HTML
@@ -1060,13 +1186,15 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
     ordering_fields = ['dia_semana', 'hora_inicio']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        cliente_id_actual = self.request.user.cliente
+        queryset = super().get_queryset().filter(cliente_id=cliente_id_actual)
         # Si es médico, solo ver sus horarios
         if hasattr(self.request.user, 'medico'):
             return queryset.filter(medico_especialidad__medico=self.request.user.medico)
         return queryset
 
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         medico = instance.medico_especialidad.medico
         # Registrar en bitácora
@@ -1075,7 +1203,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó horario para médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -1087,7 +1216,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó horario de médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} actualizado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} actualizado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -1098,7 +1228,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó horario de médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} eliminado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} eliminado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -1111,7 +1242,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a PDF",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato PDF"
+            detalles="Exportación de horarios médicos en formato PDF",
+            cliente=self.request.user.cliente
         )
         return self._exportar_pdf(queryset, "Reporte_Horarios_Medicos")
 
@@ -1123,7 +1255,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a Excel",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato Excel"
+            detalles="Exportación de horarios médicos en formato Excel",
+            cliente=self.request.user.cliente
         )
         return self._exportar_excel(queryset, "Reporte_Horarios_Medicos")
 
@@ -1135,7 +1268,8 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a HTML",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato HTML"
+            detalles="Exportación de horarios médicos en formato HTML",
+            cliente=self.request.user.cliente
         )
         return self._exportar_html(queryset, "Reporte_Horarios_Medicos")
 
@@ -1437,7 +1571,8 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_cita', '-hora_cita']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        cliente = self.request.user.cliente
+        queryset = super().get_queryset().filter(cliente_id=cliente)
         user = self.request.user
         
         # Paciente: solo ver sus citas
@@ -1450,6 +1585,7 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1457,7 +1593,8 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Agendó nueva cita",
             modulo="citas",
-            detalles=f"Cita para {instance.paciente.usuario.nombre} con Dr. {instance.medico_especialidad.medico.usuario.nombre} - {instance.fecha_cita} {instance.hora_cita}"
+            detalles=f"Cita para {instance.paciente.usuario.nombre} con Dr. {instance.medico_especialidad.medico.usuario.nombre} - {instance.fecha_cita} {instance.hora_cita}",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -1468,7 +1605,8 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó cita",
             modulo="citas",
-            detalles=f"Cita {instance.id} actualizada - Estado: {instance.estado}"
+            detalles=f"Cita {instance.id} actualizada - Estado: {instance.estado}",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -1478,7 +1616,8 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Canceló/Eliminó cita",
             modulo="citas",
-            detalles=f"Cita {instance.id} eliminada - Paciente: {instance.paciente.usuario.nombre}"
+            detalles=f"Cita {instance.id} eliminada - Paciente: {instance.paciente.usuario.nombre}",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -1503,7 +1642,8 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Cambió estado de cita",
             modulo="citas",
-            detalles=f"Cita {cita.id} cambió de {estado_anterior} a {nuevo_estado}"
+            detalles=f"Cita {cita.id} cambió de {estado_anterior} a {nuevo_estado}",
+            cliente=self.request.user.cliente
         )
         
         return Response({
@@ -1585,7 +1725,8 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
     search_fields = ['paciente__usuario__nombre', 'paciente__usuario__apellido']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        cliente = self.request.user.cliente
+        queryset = super().get_queryset().filter(cliente_id=cliente)
         user = self.request.user
         
         # Paciente: solo ver su historia clínica
@@ -1604,6 +1745,7 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1611,7 +1753,8 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Creó historia clínica",
             modulo="historias_clinicas",
-            detalles=f"Historia clínica creada para {instance.paciente.usuario.nombre}"
+            detalles=f"Historia clínica creada para {instance.paciente.usuario.nombre}",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -1622,7 +1765,8 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó historia clínica",
             modulo="historias_clinicas",
-            detalles=f"Historia clínica {instance.id} actualizada"
+            detalles=f"Historia clínica {instance.id} actualizada",
+            cliente=self.request.user.cliente
         )
 
 @api_view(['GET'])
@@ -1706,7 +1850,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_consulta']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        cliente = self.request.user.cliente
+        queryset = super().get_queryset().filter(cliente_id=cliente)
         user = self.request.user
 
         if hasattr(user, 'medico'):
@@ -1716,6 +1861,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1723,7 +1869,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Registró nueva consulta",
             modulo="consultas",
-            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}..."
+            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}...",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -1734,7 +1881,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó consulta",
             modulo="consultas",
-            detalles=f"Consulta {instance.id} actualizada"
+            detalles=f"Consulta {instance.id} actualizada",
+            cliente=self.request.user.cliente
         )
 
     def perform_destroy(self, instance):
@@ -1744,7 +1892,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Eliminó consulta",
             modulo="consultas",
-            detalles=f"Consulta {instance.id} eliminada"
+            detalles=f"Consulta {instance.id} eliminada",
+            cliente=self.request.user.cliente
         )
         instance.delete()
 
@@ -1758,7 +1907,13 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
     ordering_fields = ['fecha_backup']
     ordering = ['-fecha_backup']
 
+    def get_queryset(self):
+        cliente = self.request.user.cliente
+        queryset = super().get_queryset().filter(cliente_id=cliente)
+        return queryset
+
     def perform_create(self, serializer):
+        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1766,7 +1921,8 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Creó registro de backup",
             modulo="backups",
-            detalles=f"Backup {instance.nombre_archivo} - Tipo: {instance.tipo_backup}"
+            detalles=f"Backup {instance.nombre_archivo} - Tipo: {instance.tipo_backup}",
+            cliente=self.request.user.cliente
         )
 
     def perform_update(self, serializer):
@@ -1777,7 +1933,8 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó registro de backup",
             modulo="backups",
-            detalles=f"Backup {instance.nombre_archivo} actualizado"
+            detalles=f"Backup {instance.nombre_archivo} actualizado",
+            cliente=self.request.user.cliente
         )
 
     def destroy(self, request, *args, **kwargs):
@@ -1824,7 +1981,8 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
                 usuario_responsable=request.user,
                 tipo_backup=request.data.get('tipo_backup', 'Completo'),
                 estado='En Progreso',
-                ubicacion_almacenamiento=filepath
+                ubicacion_almacenamiento=filepath,
+                cliente=request.user.cliente
             )
             
             # Realizar backup de PostgreSQL
@@ -2292,12 +2450,14 @@ class MedicoEspecialidadSelectView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        cliente = self.request.user.cliente
         queryset = MedicoEspecialidad.objects.select_related(
             'medico__usuario', 
             'especialidad'
         ).filter(
             medico__usuario__activo=True,
-            medico__estado='Activo'
+            medico__estado='Activo',
+            cliente_id=cliente
         ).order_by('medico__usuario__nombre', 'medico__usuario__apellido', 'especialidad__nombre')
         
         # Filtro por médico (id del médico)
@@ -2326,6 +2486,14 @@ class MedicoEspecialidadSelectView(generics.ListAPIView):
         # Deshabilitar paginación
         self.pagination_class = None
         return super().list(request, *args, **kwargs)
+    
+class ClienteSuscriptorViewSet(viewsets.ModelViewSet):
+    queryset = ClienteSuscriptor.objects.all().order_by('-id')
+    serializer_class = ClienteSuscriptorSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['nombre_empresa', 'activo']
+    search_fields = ['nombre_empresa', 'correo_contacto']
 
 #-----------------Prueba-------
 class AutoViewSet(viewsets.ModelViewSet):
