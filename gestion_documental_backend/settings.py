@@ -195,17 +195,32 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
     ],
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.MultiPartParser',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',],
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',
+        'user': '1000/day'
+    }
 }
 
 SIMPLE_JWT = {
@@ -293,3 +308,40 @@ DBBACKUP_POSTGRESQL_RESTORE_CMD = r'C:\Program Files\PostgreSQL\16\bin\psql.exe'
 # También agrega estas configuraciones adicionales
 DBBACKUP_POSTGRESQL_IGNORE_TABLES = []
 DBBACKUP_POSTGRESQL_EXTENSION = 'psql'
+
+# ==============================================================================
+# CONFIGURACIÓN DE FIREBASE Y NOTIFICACIONES
+# ==============================================================================
+
+# Configuración de Firebase
+# El archivo JSON debe estar en: BASE_DIR / 'firebase' / 'service-account-key.json'
+FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase', 'service-account-key.json')
+
+# Verificar que el archivo de Firebase existe
+if os.path.exists(FIREBASE_CREDENTIALS_PATH):
+    print(" Archivo de Firebase encontrado:", FIREBASE_CREDENTIALS_PATH)
+else:
+    print("  Advertencia: Archivo de Firebase no encontrado en:", FIREBASE_CREDENTIALS_PATH)
+    print(" Las notificaciones push no funcionarán hasta que agregues el archivo JSON")
+
+# Configuración de Email para notificaciones (fallback)
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').lower() == 'true'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'alex.orellana.dev@gmail.com')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'ovuatmskfurhqnka')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+
+# Configuración adicional de email
+EMAIL_TIMEOUT = 30  # segundos
+EMAIL_SSL_KEYFILE = os.getenv('EMAIL_SSL_KEYFILE', None)
+EMAIL_SSL_CERTFILE = os.getenv('EMAIL_SSL_CERTFILE', None)
+
+# Validar configuración de email
+if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+    print(" Advertencia: Configuración de email incompleta")
+    print(" Las notificaciones por correo no funcionarán hasta que configures EMAIL_HOST_USER y EMAIL_HOST_PASSWORD")
+else:
+    print(" Configuración de email cargada correctamente")

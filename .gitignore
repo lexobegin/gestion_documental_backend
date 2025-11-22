@@ -4,6 +4,7 @@ venv/
 .venv/
 
 backups/
+firebase/
 
 # Archivos generados por Celery Beat
 celerybeat-schedule*
