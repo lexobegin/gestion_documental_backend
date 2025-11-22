@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Count, Sum, Q, F
 from datetime import datetime, timedelta, time
 
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -25,6 +25,7 @@ import platform
 from .models import *
 from .serializers import *
 
+from .services.notificaciones import NotificacionesCitas, NotificacionesExamenes
 
 # VISTA PERSONALIZADA DE LOGIN
 @api_view(['POST'])
@@ -57,8 +58,7 @@ def login_personalizado(request):
                     ip_address=get_client_ip(request),
                     accion_realizada='Inicio de sesión exitoso',
                     modulo_afectado='autenticacion',
-                    detalles=f'Usuario {email} inició sesión correctamente',
-                    cliente=user.cliente
+                    detalles=f'Usuario {email} inició sesión correctamente'
                 )
         except Exception as e:
             print(f"Error al registrar en bitácora: {str(e)}")
@@ -83,8 +83,7 @@ def login_personalizado(request):
                     ip_address=get_client_ip(request),
                     accion_realizada='Intento fallido de inicio de sesión',
                     modulo_afectado='autenticacion',
-                    detalles=f'Intento fallido para usuario: {email}',
-                    cliente=usuario_admin.cliente
+                    detalles=f'Intento fallido para usuario: {email}'
                 )
         except Exception as e:
             print(f"Error al registrar intento fallido: {str(e)}")
@@ -119,8 +118,7 @@ def logout_personalizado(request):
             ip_address=get_client_ip(request),
             accion_realizada='Cierre de sesión exitoso',
             modulo_afectado='autenticacion',
-            detalles=f'Usuario {request.user.email} cerró sesión correctamente',
-            cliente=request.user.cliente
+            detalles=f'Usuario {request.user.email} cerró sesión correctamente'
         )
         
         return Response({
@@ -134,8 +132,7 @@ def logout_personalizado(request):
             ip_address=get_client_ip(request),
             accion_realizada='Error en cierre de sesión',
             modulo_afectado='autenticacion',
-            detalles=f'Error al cerrar sesión: {str(e)}',
-            cliente=request.user.cliente
+            detalles=f'Error al cerrar sesión: {str(e)}'
         )
         
         return Response({
@@ -167,12 +164,7 @@ class PermisoViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre', 'codigo']
     search_fields = ['nombre', 'codigo', 'descripcion']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente=cliente_id_actual)
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -180,8 +172,7 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} creado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.codigo} creado"
         )
 
     def perform_update(self, serializer):
@@ -192,8 +183,7 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.codigo} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -203,8 +193,7 @@ class PermisoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó permiso: {instance.nombre}",
             modulo="permisos",
-            detalles=f"Permiso {instance.codigo} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.codigo} eliminado"
         )
         instance.delete()
 
@@ -213,7 +202,6 @@ class RegistroPacienteView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -221,32 +209,20 @@ class RegistroPacienteView(generics.CreateAPIView):
             request=self.request,
             accion="Registro de nuevo paciente",
             modulo="pacientes",
-            detalles=f"Paciente {instance.email} registrado en el sistema",
-            cliente=self.request.user.cliente
+            detalles=f"Paciente {instance.email} registrado en el sistema"
         )
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.select_related('id_rol').all()
     serializer_class = UsuarioSerializer
-    #Spermission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['email', 'nombre', 'apellido', 'telefono', 'activo', 'genero', 'id_rol']
     search_fields = ['email', 'nombre', 'apellido', 'telefono']
     ordering_fields = ['id', 'email', 'nombre', 'apellido', 'activo']
     ordering = ['-id']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        
-        return Usuario.objects.select_related('id_rol').filter(
-            cliente_id=cliente_id_actual
-        )
-
     def perform_create(self, serializer):
-        cliente_id_actual = self.request.user.cliente 
-        # Inyectar el cliente_id en el serializer antes de guardar
-        # Asumiendo que 'cliente_id' es el nombre del campo en el modelo Usuario
-        serializer.validated_data['cliente'] = cliente_id_actual
         instance = serializer.save()
         #Registrar en bitácora
         Bitacora.registrar_accion(
@@ -254,8 +230,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} creado con rol {instance.id_rol.nombre_rol}",
-            cliente=cliente_id_actual
+            detalles=f"Usuario {instance.nombre} {instance.apellido} creado con rol {instance.id_rol.nombre_rol}"
         )
 
     def perform_update(self, serializer):
@@ -266,8 +241,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Usuario {instance.nombre} {instance.apellido} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -277,8 +251,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó usuario: {instance.email}",
             modulo="usuarios",
-            detalles=f"Usuario {instance.nombre} {instance.apellido} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Usuario {instance.nombre} {instance.apellido} eliminado"
         )
         instance.delete()
 
@@ -300,8 +273,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Cambió password de usuario: {user.email}",
             modulo="usuarios",
-            detalles="Contraseña actualizada",
-            cliente=self.request.user.cliente
+            detalles="Contraseña actualizada"
         )
         
         return Response({'detail': 'Password actualizado correctamente.'}, status=status.HTTP_200_OK)
@@ -316,13 +288,6 @@ class PacienteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['usuario__nombre', 'usuario__apellido', 'estado', 'usuario__fecha_nacimiento']
     ordering = ['usuario__nombre']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        queryset = Paciente.objects.select_related('usuario').filter(
-            cliente_id=cliente_id_actual
-        ).order_by('-usuario__id')
-        return queryset
-
     # AGREGAR ESTE MÉTODO PARA USAR EL SERIALIZER CORRECTO
     def get_serializer_class(self):
         if self.action == 'create':
@@ -332,8 +297,6 @@ class PacienteViewSet(viewsets.ModelViewSet):
         return PacienteSerializer
     
     def perform_create(self, serializer):
-        cliente_id_actual = self.request.user.cliente 
-        serializer.validated_data['cliente'] = cliente_id_actual
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -341,8 +304,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.email} creado con estado: {instance.estado}",
-            cliente=cliente_id_actual
+            detalles=f"Paciente {instance.usuario.email} creado con estado: {instance.estado}"
         )
 
     def perform_update(self, serializer):
@@ -353,8 +315,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó paciente: {instance.usuario.nombre} {instance.usuario.apellido}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.email} actualizado - Estado: {instance.estado}",
-            cliente=self.request.user.cliente
+            detalles=f"Paciente {instance.usuario.email} actualizado - Estado: {instance.estado}"
         )
 
     def perform_destroy(self, instance):
@@ -367,8 +328,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó paciente y usuario asociado: {instance.usuario.email}",
             modulo="pacientes",
-            detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario",
-            cliente=self.request.user.cliente
+            detalles=f"Paciente {instance.usuario.nombre} {instance.usuario.apellido} eliminado junto con su usuario"
         )
 
     # Eliminar el usuario asociado; por la relación OneToOne se elimina el paciente automáticamente
@@ -399,8 +359,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Cambió estado de paciente: {paciente.usuario.nombre}",
             modulo="pacientes",
-            detalles=f"Paciente {paciente.usuario.email} cambió de {estado_anterior} a {nuevo_estado}",
-            cliente=self.request.user.cliente
+            detalles=f"Paciente {paciente.usuario.email} cambió de {estado_anterior} a {nuevo_estado}"
         )
         
         return Response({
@@ -458,8 +417,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó lista de pacientes",
             modulo="pacientes",
-            detalles="Exportación de datos de pacientes",
-            cliente=self.request.user.cliente
+            detalles="Exportación de datos de pacientes"
         )
         
         formato = request.query_params.get('formato', 'pdf')
@@ -549,11 +507,9 @@ class PacienteSelectView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
         queryset = Paciente.objects.select_related('usuario').filter(
             usuario__activo=True,
-            estado='Activo',
-            cliente_id=cliente_id_actual
+            estado='Activo'
         ).order_by('usuario__nombre', 'usuario__apellido')
         
         # Filtro por nombre o apellido
@@ -580,10 +536,7 @@ class PacienteBusquedaAvanzadaView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        queryset = Paciente.objects.select_related('usuario').filter(
-            usuario__cliente_id=cliente_id_actual
-        )
+        queryset = Paciente.objects.select_related('usuario').all()
         
         # Filtros avanzados
         estado = self.request.query_params.get('estado', None)
@@ -629,24 +582,6 @@ class MedicoViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['estado', 'especialidades']
     search_fields = ['usuario__nombre', 'usuario__apellido', 'numero_licencia']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-    
-    def perform_create(self, serializer):
-        cliente_id_actual = self.request.user.cliente 
-        serializer.validated_data['cliente'] = cliente_id_actual
-        instance = serializer.save()
-        # Registrar en bitácora
-        Bitacora.registrar_accion(
-            usuario=self.request.user,
-            request=self.request,
-            accion=f"Creó médico: {instance.usuario.nombre} {instance.usuario.apellido}",
-            modulo="médicos",
-            detalles=f"Médico {instance.usuario.email} creado con estado: {instance.estado}",
-            cliente=cliente_id_actual
-        )
-
 class MedicoSelectView(generics.ListAPIView):
     """
     Endpoint para select de médicos - sin paginación
@@ -655,11 +590,9 @@ class MedicoSelectView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
         queryset = Medico.objects.select_related('usuario').prefetch_related('especialidades').filter(
             usuario__activo=True,
-            estado='Activo',
-            cliente_id=cliente_id_actual
+            estado='Activo'
         ).order_by('usuario__nombre', 'usuario__apellido')
         
         # Filtro por nombre, apellido o especialidad
@@ -689,10 +622,6 @@ class AdministradorViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AdministradorSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-
 class MiPerfilView(generics.RetrieveUpdateAPIView):
     serializer_class = PerfilSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -719,12 +648,7 @@ class RolViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre_rol']
     search_fields = ['nombre_rol', 'descripcion']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -732,8 +656,7 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} creado",
-            cliente=self.request.user.cliente
+            detalles=f"Rol {instance.nombre_rol} creado"
         )
 
     def perform_update(self, serializer):
@@ -744,8 +667,7 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Rol {instance.nombre_rol} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -755,8 +677,7 @@ class RolViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó rol: {instance.nombre_rol}",
             modulo="roles",
-            detalles=f"Rol {instance.nombre_rol} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Rol {instance.nombre_rol} eliminado"
         )
         instance.delete()
 
@@ -791,8 +712,7 @@ class RolViewSet(viewsets.ModelViewSet):
                 request=self.request,
                 accion=f"Actualizó permisos del rol: {rol.nombre_rol}",
                 modulo="roles",
-                detalles=f"Permisos modificados: {len(permisos_nuevos - permisos_anteriores)} agregados, {len(permisos_anteriores - permisos_nuevos)} removidos",
-                cliente=self.request.user.cliente
+                detalles=f"Permisos modificados: {len(permisos_nuevos - permisos_anteriores)} agregados, {len(permisos_anteriores - permisos_nuevos)} removidos"
             
             )
             
@@ -806,12 +726,7 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
     filterset_fields = ['nombre']
     search_fields = ['nombre', 'codigo', 'descripcion']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -819,8 +734,7 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} creada",
-            cliente=self.request.user.cliente
+            detalles=f"Especialidad {instance.codigo} creada"
         )
 
     def perform_update(self, serializer):
@@ -831,8 +745,7 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} actualizada",
-            cliente=self.request.user.cliente
+            detalles=f"Especialidad {instance.codigo} actualizada"
         )
 
     def perform_destroy(self, instance):
@@ -842,8 +755,7 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó especialidad: {instance.nombre}",
             modulo="especialidades",
-            detalles=f"Especialidad {instance.codigo} eliminada",
-            cliente=self.request.user.cliente
+            detalles=f"Especialidad {instance.codigo} eliminada"
         )
         instance.delete()
 
@@ -866,12 +778,7 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['nombre', 'descripcion']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -879,8 +786,7 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} creado",
-            cliente=self.request.user.cliente
+            detalles=f"Tipo componente {instance.nombre} creado"
         )
 
     def perform_update(self, serializer):
@@ -891,8 +797,7 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Tipo componente {instance.nombre} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -902,8 +807,7 @@ class TipoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó tipo componente: {instance.nombre}",
             modulo="componentes",
-            detalles=f"Tipo componente {instance.nombre} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Tipo componente {instance.nombre} eliminado"
         )
         instance.delete()
 
@@ -916,12 +820,7 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
     search_fields = ['nombre_componente', 'codigo_componente', 'modulo']
     ordering_fields = ['orden', 'nombre_componente']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(cliente_id=cliente_id_actual)
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -929,8 +828,7 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} creado",
-            cliente=self.request.user.cliente
+            detalles=f"Componente {instance.codigo_componente} creado"
         )
 
     def perform_update(self, serializer):
@@ -941,8 +839,7 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Componente {instance.codigo_componente} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -952,8 +849,7 @@ class ComponenteUIViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó componente UI: {instance.nombre_componente}",
             modulo="componentes",
-            detalles=f"Componente {instance.codigo_componente} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Componente {instance.codigo_componente} eliminado"
         )
         instance.delete()
 
@@ -964,14 +860,7 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['permiso', 'componente', 'accion_permitida']
 
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(
-            cliente_id=cliente_id_actual
-        )
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -979,8 +868,7 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} asignado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.accion_permitida} asignado"
         )
 
     def perform_update(self, serializer):
@@ -991,8 +879,7 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.accion_permitida} actualizado"
         )
 
     def perform_destroy(self, instance):
@@ -1002,8 +889,7 @@ class PermisoComponenteViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó permiso componente: {instance.permiso.nombre} - {instance.componente.nombre_componente}",
             modulo="permisos_componentes",
-            detalles=f"Permiso {instance.accion_permitida} eliminado",
-            cliente=self.request.user.cliente
+            detalles=f"Permiso {instance.accion_permitida} eliminado"
         )
         instance.delete()
 
@@ -1016,12 +902,6 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['accion_realizada', 'modulo_afectado', 'usuario__email', 'detalles']
     ordering_fields = ['fecha_hora', 'accion_realizada']
     ordering = ['-fecha_hora']
-
-    def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        return super().get_queryset().filter(
-            cliente_id=cliente_id_actual
-        )
 
     # EXPORTAR A PDF
     @action(detail=False, methods=['get'], url_path='exportar-pdf')
@@ -1037,8 +917,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a PDF",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato PDF",
-            cliente=self.request.user.cliente
+            detalles="Exportación de registros de bitácora en formato PDF"
         )
         
         # Usa tu método existente de exportación PDF
@@ -1058,8 +937,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a Excel",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato Excel",
-            cliente=self.request.user.cliente
+            detalles="Exportación de registros de bitácora en formato Excel"
         )
         
         # Usa tu método existente de exportación Excel
@@ -1079,8 +957,7 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             request=self.request,
             accion="Exportó bitácora a HTML",
             modulo="bitacora",
-            detalles="Exportación de registros de bitácora en formato HTML",
-            cliente=self.request.user.cliente
+            detalles="Exportación de registros de bitácora en formato HTML"
         )
         
         # Usa tu método existente de exportación HTML
@@ -1186,15 +1063,13 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
     ordering_fields = ['dia_semana', 'hora_inicio']
 
     def get_queryset(self):
-        cliente_id_actual = self.request.user.cliente
-        queryset = super().get_queryset().filter(cliente_id=cliente_id_actual)
+        queryset = super().get_queryset()
         # Si es médico, solo ver sus horarios
         if hasattr(self.request.user, 'medico'):
             return queryset.filter(medico_especialidad__medico=self.request.user.medico)
         return queryset
 
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         medico = instance.medico_especialidad.medico
         # Registrar en bitácora
@@ -1203,8 +1078,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Creó horario para médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
-            cliente=self.request.user.cliente
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
         )
 
     def perform_update(self, serializer):
@@ -1216,8 +1090,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Actualizó horario de médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} actualizado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
-            cliente=self.request.user.cliente
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} actualizado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
         )
 
     def perform_destroy(self, instance):
@@ -1228,8 +1101,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion=f"Eliminó horario de médico",
             modulo="horarios",
-            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} eliminado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}",
-            cliente=self.request.user.cliente
+            detalles=f"Horario {instance.dia_semana} {instance.hora_inicio}-{instance.hora_fin} eliminado para Dr. {medico.usuario.nombre} {medico.usuario.apellido}"
         )
         instance.delete()
 
@@ -1242,8 +1114,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a PDF",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato PDF",
-            cliente=self.request.user.cliente
+            detalles="Exportación de horarios médicos en formato PDF"
         )
         return self._exportar_pdf(queryset, "Reporte_Horarios_Medicos")
 
@@ -1255,8 +1126,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a Excel",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato Excel",
-            cliente=self.request.user.cliente
+            detalles="Exportación de horarios médicos en formato Excel"
         )
         return self._exportar_excel(queryset, "Reporte_Horarios_Medicos")
 
@@ -1268,8 +1138,7 @@ class HorarioMedicoViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Exportó horarios a HTML",
             modulo="horarios",
-            detalles="Exportación de horarios médicos en formato HTML",
-            cliente=self.request.user.cliente
+            detalles="Exportación de horarios médicos en formato HTML"
         )
         return self._exportar_html(queryset, "Reporte_Horarios_Medicos")
 
@@ -1571,8 +1440,7 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_cita', '-hora_cita']
 
     def get_queryset(self):
-        cliente = self.request.user.cliente
-        queryset = super().get_queryset().filter(cliente_id=cliente)
+        queryset = super().get_queryset()
         user = self.request.user
         
         # Paciente: solo ver sus citas
@@ -1585,28 +1453,47 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
+
+        # Notificar al paciente sobre nueva cita
+        NotificacionesCitas.notificar_nueva_cita(instance)
+
         # Registrar en bitácora
         Bitacora.registrar_accion(
             usuario=self.request.user,
             request=self.request,
             accion="Agendó nueva cita",
             modulo="citas",
-            detalles=f"Cita para {instance.paciente.usuario.nombre} con Dr. {instance.medico_especialidad.medico.usuario.nombre} - {instance.fecha_cita} {instance.hora_cita}",
-            cliente=self.request.user.cliente
+            detalles=f"Cita para {instance.paciente.usuario.nombre} con Dr. {instance.medico_especialidad.medico.usuario.nombre} - {instance.fecha_cita} {instance.hora_cita}"
         )
 
     def perform_update(self, serializer):
+        instance_anterior = self.get_object()
+        estado_anterior = instance_anterior.estado
+        fecha_anterior = instance_anterior.fecha_cita
+        hora_anterior = instance_anterior.hora_cita
+
         instance = serializer.save()
+
+        # Verificar si cambió el estado
+        if estado_anterior != instance.estado:
+            NotificacionesCitas.notificar_cambio_estado_cita(
+                instance, estado_anterior, instance.estado, self.request.user
+            )
+        
+        # Verificar si cambió la fecha/hora (reprogramación)
+        if fecha_anterior != instance.fecha_cita or hora_anterior != instance.hora_cita:
+            NotificacionesCitas.notificar_reprogramacion_cita(
+                instance, fecha_anterior, hora_anterior, self.request.user
+            )
+
         # Registrar en bitácora
         Bitacora.registrar_accion(
             usuario=self.request.user,
             request=self.request,
             accion="Actualizó cita",
             modulo="citas",
-            detalles=f"Cita {instance.id} actualizada - Estado: {instance.estado}",
-            cliente=self.request.user.cliente
+            detalles=f"Cita {instance.id} actualizada - Estado: {instance.estado}"
         )
 
     def perform_destroy(self, instance):
@@ -1616,8 +1503,7 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Canceló/Eliminó cita",
             modulo="citas",
-            detalles=f"Cita {instance.id} eliminada - Paciente: {instance.paciente.usuario.nombre}",
-            cliente=self.request.user.cliente
+            detalles=f"Cita {instance.id} eliminada - Paciente: {instance.paciente.usuario.nombre}"
         )
         instance.delete()
 
@@ -1635,6 +1521,11 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
         estado_anterior = cita.estado
         cita.estado = nuevo_estado
         cita.save()
+
+        # Notificar cambio de estado
+        NotificacionesCitas.notificar_cambio_estado_cita(
+            cita, estado_anterior, nuevo_estado, request.user
+        )
         
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1642,8 +1533,7 @@ class AgendaCitaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Cambió estado de cita",
             modulo="citas",
-            detalles=f"Cita {cita.id} cambió de {estado_anterior} a {nuevo_estado}",
-            cliente=self.request.user.cliente
+            detalles=f"Cita {cita.id} cambió de {estado_anterior} a {nuevo_estado}"
         )
         
         return Response({
@@ -1725,8 +1615,7 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
     search_fields = ['paciente__usuario__nombre', 'paciente__usuario__apellido']
 
     def get_queryset(self):
-        cliente = self.request.user.cliente
-        queryset = super().get_queryset().filter(cliente_id=cliente)
+        queryset = super().get_queryset()
         user = self.request.user
         
         # Paciente: solo ver su historia clínica
@@ -1745,7 +1634,6 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1753,8 +1641,7 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Creó historia clínica",
             modulo="historias_clinicas",
-            detalles=f"Historia clínica creada para {instance.paciente.usuario.nombre}",
-            cliente=self.request.user.cliente
+            detalles=f"Historia clínica creada para {instance.paciente.usuario.nombre}"
         )
 
     def perform_update(self, serializer):
@@ -1765,8 +1652,7 @@ class HistoriaClinicaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó historia clínica",
             modulo="historias_clinicas",
-            detalles=f"Historia clínica {instance.id} actualizada",
-            cliente=self.request.user.cliente
+            detalles=f"Historia clínica {instance.id} actualizada"
         )
 
 @api_view(['GET'])
@@ -1838,6 +1724,195 @@ def historias_clinicas_por_paciente(request, paciente_id):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def historial_medico_completo(request, paciente_id):
+    """
+    Endpoint para obtener el historial médico completo de un paciente
+    Incluye: consultas, exámenes, recetas, seguimientos, documentos
+    """
+    try:
+        # Verificar que el paciente existe
+        try:
+            paciente = Paciente.objects.get(usuario_id=paciente_id)
+        except Paciente.DoesNotExist:
+            paciente = Paciente.objects.get(pk=paciente_id)
+        
+        user = request.user
+        
+        # Permisos según el tipo de usuario
+        if hasattr(user, 'paciente'):
+            # Paciente solo puede ver su propio historial
+            if user.paciente.usuario_id != paciente.usuario_id:
+                return Response(
+                    {'error': 'No tiene permisos para ver este historial médico'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        elif hasattr(user, 'medico'):
+            # Médico solo puede ver historial de pacientes que ha atendido
+            ha_atendido_paciente = Consulta.objects.filter(
+                medico=user.medico,
+                historia_clinica__paciente=paciente
+            ).exists()
+            
+            if not ha_atendido_paciente:
+                return Response(
+                    {'error': 'Solo puede ver historial médico de pacientes que ha atendido'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # Obtener todos los datos del historial médico
+        historial = {
+            'paciente': {
+                'id': paciente.usuario_id,
+                'nombre_completo': f"{paciente.usuario.nombre} {paciente.usuario.apellido}",
+                'email': paciente.usuario.email,
+                'telefono': paciente.usuario.telefono,
+                'edad': paciente.edad,
+                'tipo_sangre': paciente.tipo_sangre,
+                'alergias': paciente.alergias,
+                'enfermedades_cronicas': paciente.enfermedades_cronicas
+            },
+            'resumen': {
+                'total_consultas': 0,
+                'total_examenes': 0,
+                'total_recetas': 0,
+                'total_seguimientos': 0,
+                'total_documentos': 0,
+                'primera_consulta': None,
+                'ultima_consulta': None
+            },
+            'consultas': [],
+            'examenes': [],
+            'recetas': [],
+            'seguimientos': [],
+            'documentos': []
+        }
+        
+        # Obtener consultas del paciente
+        consultas = Consulta.objects.filter(
+            historia_clinica__paciente=paciente
+        ).select_related(
+            'medico__usuario',
+            'historia_clinica'
+        ).order_by('-fecha_consulta')
+        
+        if consultas.exists():
+            # Resumen
+            historial['resumen']['total_consultas'] = consultas.count()
+            historial['resumen']['primera_consulta'] = consultas.last().fecha_consulta
+            historial['resumen']['ultima_consulta'] = consultas.first().fecha_consulta
+            
+            # Consultas detalladas
+            for consulta in consultas:
+                consulta_data = {
+                    'id': consulta.id,
+                    'fecha_consulta': consulta.fecha_consulta,
+                    'medico': f"Dr. {consulta.medico.usuario.nombre} {consulta.medico.usuario.apellido}",
+                    'motivo_consulta': consulta.motivo_consulta,
+                    'sintomas': consulta.sintomas,
+                    'diagnostico': consulta.diagnostico,
+                    'tratamiento': consulta.tratamiento,
+                    'observaciones': consulta.observaciones
+                }
+                historial['consultas'].append(consulta_data)
+                
+                # Exámenes de esta consulta
+                examenes_consulta = SolicitudExamen.objects.filter(
+                    consulta=consulta
+                ).select_related('tipo_examen')
+                
+                for examen in examenes_consulta:
+                    examen_data = {
+                        'id': examen.id,
+                        'tipo_examen': examen.tipo_examen.nombre,
+                        'fecha_solicitud': examen.fecha_solicitud,
+                        'urgencia': examen.urgencia,
+                        'estado': examen.estado,
+                        'resultados': examen.resultados,
+                        'observaciones': examen.observaciones,
+                        'fecha_resultado': examen.fecha_resultado
+                    }
+                    historial['examenes'].append(examen_data)
+                
+                # Recetas de esta consulta
+                recetas_consulta = Receta.objects.filter(consulta=consulta)
+                for receta in recetas_consulta:
+                    detalles_receta = DetalleReceta.objects.filter(receta=receta)
+                    
+                    receta_data = {
+                        'id': receta.id,
+                        'fecha_receta': receta.fecha_receta,
+                        'observaciones': receta.observaciones,
+                        'medicamentos': [
+                            {
+                                'medicamento': detalle.medicamento,
+                                'dosis': detalle.dosis,
+                                'frecuencia': detalle.frecuencia,
+                                'duracion': detalle.duracion,
+                                'indicaciones': detalle.indicaciones
+                            }
+                            for detalle in detalles_receta
+                        ]
+                    }
+                    historial['recetas'].append(receta_data)
+                
+                # Seguimientos de esta consulta
+                seguimientos_consulta = Seguimiento.objects.filter(consulta=consulta)
+                for seguimiento in seguimientos_consulta:
+                    seguimiento_data = {
+                        'id': seguimiento.id,
+                        'fecha_seguimiento': seguimiento.fecha_seguimiento,
+                        'observaciones': seguimiento.observaciones,
+                        'recomendaciones': seguimiento.recomendaciones
+                    }
+                    historial['seguimientos'].append(seguimiento_data)
+            
+            # Documentos del paciente (de todas las consultas)
+            documentos = Documento.objects.filter(
+                historia_clinica__paciente=paciente
+            ).select_related('consulta').order_by('-fecha_subida')
+            
+            for documento in documentos:
+                documento_data = {
+                    'id': documento.id,
+                    'tipo_documento': documento.get_tipo_documento_display(),
+                    'nombre_archivo': documento.nombre_archivo,
+                    'fecha_subida': documento.fecha_subida,
+                    'consulta_asociada': documento.consulta.id if documento.consulta else None
+                }
+                historial['documentos'].append(documento_data)
+            
+            # Actualizar resumen
+            historial['resumen']['total_examenes'] = len(historial['examenes'])
+            historial['resumen']['total_recetas'] = len(historial['recetas'])
+            historial['resumen']['total_seguimientos'] = len(historial['seguimientos'])
+            historial['resumen']['total_documentos'] = len(historial['documentos'])
+            
+            return Response(historial)
+        else:
+            # No tiene consultas (no tiene historial)
+            return Response(
+                {
+                    'paciente': historial['paciente'],
+                    'mensaje': 'El paciente no tiene historial médico registrado',
+                    'resumen': historial['resumen']
+                },
+                status=status.HTTP_200_OK
+            )
+        
+    except Paciente.DoesNotExist:
+        return Response(
+            {'error': 'Paciente no encontrado'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'Error del servidor: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
 class ConsultaViewSet(viewsets.ModelViewSet):
     queryset = Consulta.objects.select_related(
         'historia_clinica__paciente__usuario', 'medico__usuario'
@@ -1850,8 +1925,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_consulta']
 
     def get_queryset(self):
-        cliente = self.request.user.cliente
-        queryset = super().get_queryset().filter(cliente_id=cliente)
+        queryset = super().get_queryset()
         user = self.request.user
 
         if hasattr(user, 'medico'):
@@ -1861,7 +1935,6 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1869,8 +1942,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Registró nueva consulta",
             modulo="consultas",
-            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}...",
-            cliente=self.request.user.cliente
+            detalles=f"Consulta para {instance.historia_clinica.paciente.usuario.nombre} - Motivo: {instance.motivo_consulta[:50]}..."
         )
 
     def perform_update(self, serializer):
@@ -1881,8 +1953,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó consulta",
             modulo="consultas",
-            detalles=f"Consulta {instance.id} actualizada",
-            cliente=self.request.user.cliente
+            detalles=f"Consulta {instance.id} actualizada"
         )
 
     def perform_destroy(self, instance):
@@ -1892,8 +1963,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Eliminó consulta",
             modulo="consultas",
-            detalles=f"Consulta {instance.id} eliminada",
-            cliente=self.request.user.cliente
+            detalles=f"Consulta {instance.id} eliminada"
         )
         instance.delete()
 
@@ -1907,13 +1977,7 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
     ordering_fields = ['fecha_backup']
     ordering = ['-fecha_backup']
 
-    def get_queryset(self):
-        cliente = self.request.user.cliente
-        queryset = super().get_queryset().filter(cliente_id=cliente)
-        return queryset
-
     def perform_create(self, serializer):
-        serializer.validated_data['cliente'] = self.request.user.cliente
         instance = serializer.save()
         # Registrar en bitácora
         Bitacora.registrar_accion(
@@ -1921,8 +1985,7 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Creó registro de backup",
             modulo="backups",
-            detalles=f"Backup {instance.nombre_archivo} - Tipo: {instance.tipo_backup}",
-            cliente=self.request.user.cliente
+            detalles=f"Backup {instance.nombre_archivo} - Tipo: {instance.tipo_backup}"
         )
 
     def perform_update(self, serializer):
@@ -1933,8 +1996,7 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
             request=self.request,
             accion="Actualizó registro de backup",
             modulo="backups",
-            detalles=f"Backup {instance.nombre_archivo} actualizado",
-            cliente=self.request.user.cliente
+            detalles=f"Backup {instance.nombre_archivo} actualizado"
         )
 
     def destroy(self, request, *args, **kwargs):
@@ -1981,8 +2043,7 @@ class RegistroBackupViewSet(viewsets.ModelViewSet):
                 usuario_responsable=request.user,
                 tipo_backup=request.data.get('tipo_backup', 'Completo'),
                 estado='En Progreso',
-                ubicacion_almacenamiento=filepath,
-                cliente=request.user.cliente
+                ubicacion_almacenamiento=filepath
             )
             
             # Realizar backup de PostgreSQL
@@ -2450,14 +2511,12 @@ class MedicoEspecialidadSelectView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        cliente = self.request.user.cliente
         queryset = MedicoEspecialidad.objects.select_related(
-            'medico__usuario', 
+            'medico__usuario',
             'especialidad'
         ).filter(
             medico__usuario__activo=True,
-            medico__estado='Activo',
-            cliente_id=cliente
+            medico__estado='Activo'
         ).order_by('medico__usuario__nombre', 'medico__usuario__apellido', 'especialidad__nombre')
         
         # Filtro por médico (id del médico)
@@ -2486,14 +2545,6 @@ class MedicoEspecialidadSelectView(generics.ListAPIView):
         # Deshabilitar paginación
         self.pagination_class = None
         return super().list(request, *args, **kwargs)
-    
-class ClienteSuscriptorViewSet(viewsets.ModelViewSet):
-    queryset = ClienteSuscriptor.objects.all().order_by('-id')
-    serializer_class = ClienteSuscriptorSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['nombre_empresa', 'activo']
-    search_fields = ['nombre_empresa', 'correo_contacto']
 
 #-----------------Prueba-------
 class AutoViewSet(viewsets.ModelViewSet):
@@ -2574,6 +2625,10 @@ class SolicitudExamenViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         instance = serializer.save()
+
+        # Notificar al paciente sobre nuevo examen
+        NotificacionesExamenes.notificar_nuevo_examen(instance)
+
         Bitacora.registrar_accion(
             usuario=self.request.user,
             request=self.request,
@@ -2660,6 +2715,9 @@ class SolicitudExamenViewSet(viewsets.ModelViewSet):
         solicitud.estado = 'completado'
         solicitud.fecha_resultado = timezone.now()
         solicitud.save()
+
+        # Notificar al paciente que hay resultados disponibles
+        NotificacionesExamenes.notificar_resultado_examen(solicitud)
         
         Bitacora.registrar_accion(
             usuario=self.request.user,
@@ -2714,3 +2772,526 @@ class TipoExamenSelectView(generics.ListAPIView):
             detalles=f"Auto {instance.marca} {instance.modelo} eliminado"
         )
         instance.delete()
+
+# -------------------------------
+# VISTAS PARA NUEVOS MODELOS
+# -------------------------------
+
+class DocumentoViewSet(viewsets.ModelViewSet):
+    queryset = Documento.objects.select_related(
+        'historia_clinica__paciente__usuario',
+        'consulta'
+    ).all().order_by('-fecha_subida')
+    serializer_class = DocumentoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['tipo_documento', 'historia_clinica', 'consulta']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        if hasattr(user, 'paciente'):
+            return queryset.filter(historia_clinica__paciente=user.paciente)
+        elif hasattr(user, 'medico'):
+            # Médicos ven documentos de pacientes que han atendido
+            pacientes_atendidos = Consulta.objects.filter(
+                medico=user.medico
+            ).values_list('historia_clinica__paciente', flat=True)
+            return queryset.filter(historia_clinica__paciente__in=pacientes_atendidos)
+        return queryset
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Subió documento médico",
+            modulo="documentos",
+            detalles=f"Documento {instance.nombre_archivo} subido"
+        )
+
+class RecetaViewSet(viewsets.ModelViewSet):
+    queryset = Receta.objects.select_related(
+        'consulta__historia_clinica__paciente__usuario',
+        'consulta__medico__usuario'
+    ).all().order_by('-fecha_receta')
+    serializer_class = RecetaSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['consulta']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        if hasattr(user, 'paciente'):
+            return queryset.filter(consulta__historia_clinica__paciente=user.paciente)
+        elif hasattr(user, 'medico'):
+            return queryset.filter(consulta__medico=user.medico)
+        return queryset
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Generó receta médica",
+            modulo="recetas",
+            detalles=f"Receta para {instance.consulta.historia_clinica.paciente.usuario.nombre_completo}"
+        )
+
+class SeguimientoViewSet(viewsets.ModelViewSet):
+    queryset = Seguimiento.objects.select_related(
+        'consulta__historia_clinica__paciente__usuario',
+        'consulta__medico__usuario'
+    ).all().order_by('-fecha_seguimiento')
+    serializer_class = SeguimientoSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['consulta']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        if hasattr(user, 'paciente'):
+            return queryset.filter(consulta__historia_clinica__paciente=user.paciente)
+        elif hasattr(user, 'medico'):
+            return queryset.filter(consulta__medico=user.medico)
+        return queryset
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Creó seguimiento médico",
+            modulo="seguimientos",
+            detalles=f"Seguimiento para {instance.consulta.historia_clinica.paciente.usuario.nombre_completo}"
+        )
+
+class NotificacionViewSet(viewsets.ModelViewSet):
+    queryset = Notificacion.objects.all()
+    serializer_class = NotificacionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['tipo', 'leida']
+    ordering_fields = ['fecha_envio']
+    ordering = ['-fecha_envio']
+
+    def get_queryset(self):
+        return Notificacion.objects.filter(usuario=self.request.user)
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Creó notificación",
+            modulo="notificaciones",
+            detalles=f"Notificación {instance.tipo} para {instance.usuario.email}"
+        )
+
+    @action(detail=True, methods=['post'], url_path='marcar-leida')
+    def marcar_leida(self, request, pk=None):
+        notificacion = self.get_object()
+        notificacion.leida = True
+        notificacion.save()
+        
+        return Response({'detail': 'Notificación marcada como leída.'})
+
+    @action(detail=False, methods=['post'], url_path='marcar-todas-leidas')
+    def marcar_todas_leidas(self, request):
+        Notificacion.objects.filter(usuario=request.user, leida=False).update(leida=True)
+        
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Marcó todas las notificaciones como leídas",
+            modulo="notificaciones",
+            detalles="Todas las notificaciones marcadas como leídas"
+        )
+        
+        return Response({'detail': 'Todas las notificaciones marcadas como leídas.'})
+
+    @action(detail=False, methods=['get'], url_path='no-leidas')
+    def notificaciones_no_leidas(self, request):
+        notificaciones = self.get_queryset().filter(leida=False)
+        serializer = self.get_serializer(notificaciones, many=True)
+        return Response(serializer.data)
+
+class DispositivoViewSet(viewsets.ModelViewSet):
+    queryset = Dispositivo.objects.all()
+    serializer_class = DispositivoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Dispositivo.objects.filter(usuario=self.request.user)
+
+    def perform_create(self, serializer):
+        token_fcm = serializer.validated_data['token_fcm']
+        
+        # Verificar si ya existe el token para este usuario
+        dispositivo_existente = Dispositivo.objects.filter(
+            usuario=self.request.user, 
+            token_fcm=token_fcm
+        ).first()
+        
+        if dispositivo_existente:
+            # Actualizar dispositivo existente
+            dispositivo_existente.activo = True
+            dispositivo_existente.plataforma = serializer.validated_data.get('plataforma')
+            dispositivo_existente.save()
+            instance = dispositivo_existente
+        else:
+            # Crear nuevo dispositivo
+            instance = serializer.save(usuario=self.request.user)
+        
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Registró dispositivo para notificaciones",
+            modulo="notificaciones",
+            detalles=f"Dispositivo {instance.plataforma} registrado"
+        )
+        
+        return instance
+
+    @action(detail=False, methods=['post'], url_path='desactivar-token')
+    def desactivar_token(self, request):
+        token_fcm = request.data.get('token_fcm')
+        if not token_fcm:
+            return Response(
+                {'detail': 'Token FCM requerido.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        Dispositivo.objects.filter(
+            usuario=request.user, 
+            token_fcm=token_fcm
+        ).update(activo=False)
+        
+        return Response({'detail': 'Token desactivado correctamente.'})
+
+# Vista para enviar notificaciones personalizadas
+class EnviarNotificacionPersonalizadaView(generics.CreateAPIView):
+    serializer_class = NotificacionCreateSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        from .services.notificaciones import ServicioNotificaciones
+        
+        notificacion = ServicioNotificaciones.crear_y_enviar_notificacion(
+            usuario=serializer.validated_data['usuario'],
+            tipo=serializer.validated_data['tipo'],
+            titulo=serializer.validated_data['titulo'],
+            mensaje=serializer.validated_data['mensaje'],
+            datos_adicionales=serializer.validated_data.get('datos_adicionales')
+        )
+        
+        Bitacora.registrar_accion(
+            usuario=self.request.user,
+            request=self.request,
+            accion="Envió notificación personalizada",
+            modulo="notificaciones",
+            detalles=f"Notificación enviada a {notificacion.usuario.email}"
+        )
+        
+        return Response(
+            NotificacionSerializer(notificacion).data,
+            status=status.HTTP_201_CREATED
+        )
+# Endpoint para Dashboard
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def dashboard(request):
+    """
+    Endpoint para dashboard con datos listos para gráficas
+    Diferentes datos según el tipo de usuario (Médico o Admin)
+    """
+    user = request.user
+    fecha_actual = timezone.now().date()
+    mes_actual = fecha_actual.month
+    año_actual = fecha_actual.year
+    
+    if hasattr(user, 'medico'):
+        return dashboard_medico(user.medico, fecha_actual, mes_actual, año_actual)
+    elif hasattr(user, 'administrador'):
+        return dashboard_admin(fecha_actual, mes_actual, año_actual)
+    else:
+        return Response(
+            {'error': 'Dashboard no disponible para este tipo de usuario'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+def dashboard_medico(medico, fecha_actual, mes_actual, año_actual):
+    """Dashboard específico para médico logueado"""
+    try:
+        # Consultas del médico
+        consultas_mes = Consulta.objects.filter(
+            medico=medico,
+            fecha_consulta__month=mes_actual,
+            fecha_consulta__year=año_actual
+        )
+        
+        # Citas del médico
+        citas_mes = AgendaCita.objects.filter(
+            medico_especialidad__medico=medico,
+            fecha_cita__month=mes_actual,
+            fecha_cita__year=año_actual
+        )
+        
+        # Pacientes atendidos este mes (únicos)
+        pacientes_atendidos_mes = consultas_mes.values('historia_clinica__paciente').distinct().count()
+        
+        # Estadísticas de citas por estado
+        citas_por_estado = citas_mes.values('estado').annotate(total=Count('id'))
+        
+        # Consultas por día (últimos 7 días)
+        fecha_inicio = fecha_actual - timedelta(days=6)
+        consultas_ultimos_7_dias = Consulta.objects.filter(
+            medico=medico,
+            fecha_consulta__date__gte=fecha_inicio,
+            fecha_consulta__date__lte=fecha_actual
+        ).extra({
+            'fecha': "DATE(fecha_consulta)"
+        }).values('fecha').annotate(total=Count('id')).order_by('fecha')
+        
+        # Especialidades del médico con conteo de consultas
+        especialidades_medico = MedicoEspecialidad.objects.filter(medico=medico)
+        consultas_por_especialidad = []
+        
+        for me in especialidades_medico:
+            count = Consulta.objects.filter(
+                medico=medico,
+                medico__especialidades=me.especialidad
+            ).count()
+            consultas_por_especialidad.append({
+                'especialidad': me.especialidad.nombre,
+                'total_consultas': count
+            })
+        
+        # Próximas citas (próximos 7 días)
+        proximas_citas = AgendaCita.objects.filter(
+            medico_especialidad__medico=medico,
+            fecha_cita__gte=fecha_actual,
+            fecha_cita__lte=fecha_actual + timedelta(days=7),
+            estado__in=['pendiente', 'confirmada']
+        ).select_related('paciente__usuario', 'medico_especialidad__especialidad')[:10]
+        
+        # Exámenes pendientes de revisión
+        examenes_pendientes = SolicitudExamen.objects.filter(
+            medico=medico,
+            estado='solicitado'
+        ).count()
+        
+        dashboard_data = {
+            'tipo_usuario': 'medico',
+            'resumen_mes': {
+                'total_consultas': consultas_mes.count(),
+                'total_citas': citas_mes.count(),
+                'pacientes_atendidos': pacientes_atendidos_mes,
+                'examenes_pendientes': examenes_pendientes
+            },
+            'graficas': {
+                'citas_por_estado': {
+                    'labels': [item['estado'].title() for item in citas_por_estado],
+                    'data': [item['total'] for item in citas_por_estado],
+                    'colors': ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0']
+                },
+                'consultas_ultimos_7_dias': {
+                    'labels': [item['fecha'].strftime('%d/%m') for item in consultas_ultimos_7_dias],
+                    'data': [item['total'] for item in consultas_ultimos_7_dias]
+                },
+                'consultas_por_especialidad': {
+                    'labels': [item['especialidad'] for item in consultas_por_especialidad],
+                    'data': [item['total_consultas'] for item in consultas_por_especialidad]
+                }
+            },
+            'proximas_citas': [
+                {
+                    'id': cita.id,
+                    'paciente': cita.paciente.usuario.nombre_completo,
+                    'fecha': cita.fecha_cita.strftime('%d/%m/%Y'),
+                    'hora': cita.hora_cita.strftime('%H:%M'),
+                    'especialidad': cita.medico_especialidad.especialidad.nombre,
+                    'estado': cita.estado
+                }
+                for cita in proximas_citas
+            ],
+            'alertas': {
+                'citas_sin_confirmar': citas_mes.filter(estado='pendiente').count(),
+                'examenes_sin_resultado': examenes_pendientes,
+                'citas_hoy': AgendaCita.objects.filter(
+                    medico_especialidad__medico=medico,
+                    fecha_cita=fecha_actual,
+                    estado__in=['pendiente', 'confirmada']
+                ).count()
+            }
+        }
+        
+        return Response(dashboard_data)
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Error generando dashboard médico: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+def dashboard_admin(fecha_actual, mes_actual, año_actual):
+    """Dashboard general para administrador"""
+    try:
+        # Estadísticas generales del sistema
+        total_usuarios = Usuario.objects.filter(activo=True).count()
+        total_medicos = Medico.objects.filter(estado='Activo').count()
+        total_pacientes = Paciente.objects.filter(estado='Activo').count()
+        total_consultas = Consulta.objects.count()
+        
+        # Citas del mes
+        citas_mes = AgendaCita.objects.filter(
+            fecha_cita__month=mes_actual,
+            fecha_cita__year=año_actual
+        )
+        
+        # Consultas del mes
+        consultas_mes = Consulta.objects.filter(
+            fecha_consulta__month=mes_actual,
+            fecha_consulta__year=año_actual
+        )
+        
+        # Crecimiento de usuarios (últimos 6 meses)
+        crecimiento_usuarios = []
+        for i in range(5, -1, -1):
+            mes = mes_actual - i
+            año = año_actual
+            if mes <= 0:
+                mes += 12
+                año -= 1
+            
+            usuarios_mes = Usuario.objects.filter(
+                date_joined__month=mes,
+                date_joined__year=año
+            ).count()
+            
+            crecimiento_usuarios.append({
+                'mes': f"{mes:02d}/{año}",
+                'total': usuarios_mes
+            })
+        
+        # Citas por estado
+        citas_por_estado = citas_mes.values('estado').annotate(total=Count('id'))
+        
+        # Consultas por especialidad (top 5)
+        consultas_por_especialidad = Consulta.objects.values(
+            'medico__especialidades__nombre'
+        ).annotate(
+            total=Count('id')
+        ).order_by('-total')[:5]
+        
+        # Médicos más activos (top 5)
+        medicos_activos = Consulta.objects.values(
+            'medico__usuario__nombre',
+            'medico__usuario__apellido'
+        ).annotate(
+            total_consultas=Count('id')
+        ).order_by('-total_consultas')[:5]
+        
+        # Citas por día (últimos 30 días)
+        fecha_inicio_30 = fecha_actual - timedelta(days=29)
+        citas_ultimos_30_dias = AgendaCita.objects.filter(
+            fecha_cita__gte=fecha_inicio_30,
+            fecha_cita__lte=fecha_actual
+        ).extra({
+            'fecha': "DATE(fecha_cita)"
+        }).values('fecha').annotate(total=Count('id')).order_by('fecha')
+        
+        # Estadísticas de uso del sistema
+        documentos_subidos = Documento.objects.count()
+        examenes_solicitados = SolicitudExamen.objects.count()
+        recetas_generadas = Receta.objects.count()
+        
+        # Alertas del sistema
+        citas_pendientes_hoy = AgendaCita.objects.filter(
+            fecha_cita=fecha_actual,
+            estado='pendiente'
+        ).count()
+        
+        medicos_sin_horario = Medico.objects.filter(
+            estado='Activo'
+        ).exclude(
+            usuario_id__in=MedicoEspecialidad.objects.filter(
+                horariomedico__activo=True
+            ).values('medico')
+        ).count()
+        
+        dashboard_data = {
+            'tipo_usuario': 'admin',
+            'resumen_general': {
+                'total_usuarios': total_usuarios,
+                'total_medicos': total_medicos,
+                'total_pacientes': total_pacientes,
+                'total_consultas': total_consultas,
+                'citas_mes': citas_mes.count(),
+                'consultas_mes': consultas_mes.count(),
+                'documentos_subidos': documentos_subidos,
+                'examenes_solicitados': examenes_solicitados,
+                'recetas_generadas': recetas_generadas
+            },
+            'graficas': {
+                'crecimiento_usuarios': {
+                    'labels': [item['mes'] for item in crecimiento_usuarios],
+                    'data': [item['total'] for item in crecimiento_usuarios]
+                },
+                'citas_por_estado': {
+                    'labels': [item['estado'].title() for item in citas_por_estado],
+                    'data': [item['total'] for item in citas_por_estado],
+                    'colors': ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0']
+                },
+                'consultas_por_especialidad': {
+                    'labels': [item['medico__especialidades__nombre'] for item in consultas_por_especialidad],
+                    'data': [item['total'] for item in consultas_por_especialidad]
+                },
+                'citas_ultimos_30_dias': {
+                    'labels': [item['fecha'].strftime('%d/%m') for item in citas_ultimos_30_dias],
+                    'data': [item['total'] for item in citas_ultimos_30_dias]
+                }
+            },
+            'top_medicos': [
+                {
+                    'nombre': f"{item['medico__usuario__nombre']} {item['medico__usuario__apellido']}",
+                    'total_consultas': item['total_consultas']
+                }
+                for item in medicos_activos
+            ],
+            'alertas_sistema': {
+                'citas_pendientes_hoy': citas_pendientes_hoy,
+                'medicos_sin_horario': medicos_sin_horario,
+                'backups_pendientes': RegistroBackup.objects.filter(estado='En Progreso').count(),
+                'examenes_pendientes': SolicitudExamen.objects.filter(estado='solicitado').count()
+            },
+            'metricas_rendimiento': {
+                'tasa_confirmacion_citas': round(
+                    (citas_mes.filter(estado='confirmada').count() / citas_mes.count() * 100) 
+                    if citas_mes.count() > 0 else 0, 2
+                ),
+                'promedio_consultas_por_medico': round(
+                    consultas_mes.count() / max(total_medicos, 1), 1
+                ),
+                'ocupacion_medicos': round(
+                    (citas_mes.filter(estado__in=['confirmada', 'realizada']).count() / 
+                     (total_medicos * 20 * 4)) * 100 if total_medicos > 0 else 0, 2  # 20 días * 4 semanas
+                )
+            }
+        }
+        
+        return Response(dashboard_data)
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Error generando dashboard admin: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

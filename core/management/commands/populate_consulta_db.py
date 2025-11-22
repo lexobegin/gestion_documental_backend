@@ -21,7 +21,7 @@ class Command(BaseCommand):
         self.crear_citas_ejemplo()
         self.crear_consultas_medicas()
         self.crear_registros_backup()
-        self.crear_bitacora()
+        #self.crear_bitacora()
 
         self.stdout.write(self.style.SUCCESS("¡Datos del sistema generados exitosamente!"))
 
@@ -414,14 +414,6 @@ class Command(BaseCommand):
                 'estado': 'Exitoso',
                 'ubicacion_almacenamiento': '/backups/incremental/',
                 'notas': 'Backup incremental. Solo cambios desde el último backup completo.'
-            },
-            {
-                'nombre_archivo': 'backup_diferencial_20240117_030000.sql',
-                'tamano_bytes': 209715200,  # 200 MB
-                'tipo_backup': 'Diferencial',
-                'estado': 'Exitoso',
-                'ubicacion_almacenamiento': '/backups/diferenciales/',
-                'notas': 'Backup diferencial semanal. Incluye todos los cambios de la semana.'
             }
         ]
 

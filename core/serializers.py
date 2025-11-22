@@ -24,21 +24,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 class PermisoSerializer(serializers.ModelSerializer):
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Permiso
-        fields = ['id', 'nombre', 'codigo', 'descripcion', 'cliente']
+        fields = ['id', 'nombre', 'codigo', 'descripcion']
 
 class RolSerializer(serializers.ModelSerializer):
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Rol
-        fields = ['id', 'nombre_rol', 'descripcion', 'cliente']
+        fields = ['id', 'nombre_rol', 'descripcion']
 
 class UsuarioSerializer(serializers.ModelSerializer):
     # Lectura: objeto rol anidado (como "detalle")
     rol = RolSerializer(read_only=True, source='id_rol')
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     # Escritura: id del rol (FK)
     id_rol = serializers.PrimaryKeyRelatedField(
         queryset=Rol.objects.all(),
@@ -51,7 +48,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         model = Usuario
         fields = [
             'id', 'email', 'password', 'nombre', 'apellido', 'telefono', 'direccion',
-            'fecha_nacimiento', 'genero', 'activo', 'rol', 'id_rol', 'cliente'
+            'fecha_nacimiento', 'genero', 'activo', 'rol', 'id_rol'
         ]
         extra_kwargs = {
             'email': {'required': True},
@@ -95,18 +92,17 @@ class UsuarioSelectSerializer(serializers.ModelSerializer):
         return f"{obj.nombre} {obj.apellido}"
 
 class EspecialidadSerializer(serializers.ModelSerializer):
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Especialidad
-        fields = ['id', 'codigo', 'nombre', 'descripcion', 'cliente']
+        fields = ['id', 'codigo', 'nombre', 'descripcion']
 
 class MedicoEspecialidadSerializer(serializers.ModelSerializer):
     medico_nombre = serializers.CharField(source='medico.usuario.nombre_completo', read_only=True)
     especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
+
     class Meta:
         model = MedicoEspecialidad
-        fields = ['id', 'medico', 'medico_nombre', 'especialidad', 'especialidad_nombre', 'cliente']
+        fields = ['id', 'medico', 'medico_nombre', 'especialidad', 'especialidad_nombre']
 
 class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
     """
@@ -115,7 +111,6 @@ class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
     medico_nombre_completo = serializers.SerializerMethodField()
     especialidad_nombre = serializers.CharField(source='especialidad.nombre', read_only=True)
     especialidad_codigo = serializers.CharField(source='especialidad.codigo', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = MedicoEspecialidad
@@ -125,8 +120,7 @@ class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
             'medico_nombre_completo',
             'especialidad', 
             'especialidad_nombre',
-            'especialidad_codigo',
-            'cliente'
+            'especialidad_codigo'
         ]
 
     def get_medico_nombre_completo(self, obj):
@@ -135,11 +129,10 @@ class MedicoEspecialidadSelectSerializer(serializers.ModelSerializer):
 class MedicoSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
     especialidades = EspecialidadSerializer(many=True, read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Medico
-        fields = ['usuario', 'numero_licencia', 'firma_digital', 'estado', 'especialidades', 'cliente']
+        fields = ['usuario', 'numero_licencia', 'firma_digital', 'estado', 'especialidades']
 
     def get_especialidades(self, obj):
         relaciones = MedicoEspecialidad.objects.filter(medico=obj).select_related('especialidad')
@@ -166,7 +159,7 @@ class PacienteSerializer(serializers.ModelSerializer):
     direccion = serializers.CharField(source='usuario.direccion', read_only=True)
     fecha_nacimiento = serializers.DateField(source='usuario.fecha_nacimiento', read_only=True)
     genero = serializers.CharField(source='usuario.genero', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
+    
     # Campos para escritura
     id_usuario = serializers.PrimaryKeyRelatedField(
         queryset=Usuario.objects.all(),
@@ -181,7 +174,7 @@ class PacienteSerializer(serializers.ModelSerializer):
             'usuario', 'id_usuario', 'nombre_completo', 'email', 'telefono', 
             'direccion', 'fecha_nacimiento', 'genero', 'tipo_sangre', 'alergias', 
             'enfermedades_cronicas', 'medicamentos_actuales', 'contacto_emergencia_nombre',
-            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado', 'cliente'
+            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado'
         ]
         read_only_fields = ['usuario', 'nombre_completo', 'email', 'telefono', 
                            'direccion', 'fecha_nacimiento', 'genero']
@@ -235,7 +228,6 @@ class PacienteCreateSerializer(serializers.ModelSerializer):
         write_only=True, 
         required=False
     )
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Paciente
@@ -243,7 +235,7 @@ class PacienteCreateSerializer(serializers.ModelSerializer):
             'email', 'password', 'nombre', 'apellido', 'telefono', 'direccion',
             'fecha_nacimiento', 'genero', 'tipo_sangre', 'alergias', 
             'enfermedades_cronicas', 'medicamentos_actuales', 'contacto_emergencia_nombre',
-            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado', 'cliente'
+            'contacto_emergencia_telefono', 'contacto_emergencia_parentesco', 'estado'
         ]
 
     def create(self, validated_data):
@@ -257,7 +249,6 @@ class PacienteCreateSerializer(serializers.ModelSerializer):
             'direccion': validated_data.pop('direccion', ''),
             'fecha_nacimiento': validated_data.pop('fecha_nacimiento', None),
             'genero': validated_data.pop('genero', ''),
-            'cliente': validated_data.pop('cliente', None)
         }
         
         # Crear usuario
@@ -286,7 +277,6 @@ class PacienteUpdateSerializer(serializers.ModelSerializer):
         source='usuario.genero', 
         required=False
     )
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Paciente
@@ -294,7 +284,7 @@ class PacienteUpdateSerializer(serializers.ModelSerializer):
             'nombre', 'apellido', 'telefono', 'direccion', 'fecha_nacimiento', 'genero',
             'tipo_sangre', 'alergias', 'enfermedades_cronicas', 'medicamentos_actuales',
             'contacto_emergencia_nombre', 'contacto_emergencia_telefono', 
-            'contacto_emergencia_parentesco', 'estado', 'cliente'
+            'contacto_emergencia_parentesco', 'estado'
         ]
 
     def update(self, instance, validated_data):
@@ -363,10 +353,9 @@ class PacienteResumenSerializer(serializers.ModelSerializer):
 
 class AdministradorSerializer(serializers.ModelSerializer):
     usuario = UsuarioSerializer()
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = Administrador
-        fields = ['usuario', 'cliente']
+        fields = ['usuario']
 
 class PerfilSerializer(serializers.ModelSerializer):
     tipo_usuario = serializers.CharField()
@@ -374,14 +363,13 @@ class PerfilSerializer(serializers.ModelSerializer):
     datos_paciente = serializers.SerializerMethodField()
     datos_admin = serializers.SerializerMethodField()
     rol = RolSerializer(read_only=True, source='id_rol')
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Usuario
         fields = [
             'id', 'email', 'nombre', 'apellido', 'telefono', 'direccion',
             'fecha_nacimiento', 'genero', 'activo', 'rol', 'tipo_usuario',
-            'datos_medico', 'datos_paciente', 'datos_admin', 'cliente'
+            'datos_medico', 'datos_paciente', 'datos_admin'
         ]
         read_only_fields = ['email', 'tipo_usuario', 'rol']
 
@@ -418,11 +406,10 @@ class PerfilSerializer(serializers.ModelSerializer):
 
 class RegistroPacienteSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Usuario
-        fields = ['email', 'password', 'nombre', 'apellido', 'telefono', 'cliente']
+        fields = ['email', 'password', 'nombre', 'apellido', 'telefono']
 
     def create(self, validated_data):
         rol_paciente = Rol.objects.get(nombre_rol='Paciente')
@@ -437,20 +424,18 @@ class RegistroPacienteSerializer(serializers.ModelSerializer):
 # NUEVOS SERIALIZERS PARA SPRINT 2
 
 class TipoComponenteSerializer(serializers.ModelSerializer):
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = TipoComponente
-        fields = ['id', 'nombre', 'descripcion', 'cliente']
+        fields = ['id', 'nombre', 'descripcion']
 
 class ComponenteUISerializer(serializers.ModelSerializer):
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
     tipo_componente = TipoComponenteSerializer(read_only=True)
     
     class Meta:
         model = ComponenteUI
         fields = [
             'id', 'tipo_componente', 'codigo_componente', 'nombre_componente',
-            'descripcion', 'modulo', 'ruta', 'icono', 'orden', 'activo', 'cliente'
+            'descripcion', 'modulo', 'ruta', 'icono', 'orden', 'activo'
         ]
 
 class PermisoComponenteSerializer(serializers.ModelSerializer):
@@ -466,13 +451,12 @@ class PermisoComponenteSerializer(serializers.ModelSerializer):
         write_only=True,
         source='componente'
     )
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = PermisoComponente
         fields = [
             'id', 'permiso', 'componente', 'id_permiso', 'id_componente',
-            'accion_permitida', 'condiciones', 'cliente'
+            'accion_permitida', 'condiciones'
         ]
 
 class BitacoraSerializer(serializers.ModelSerializer):
@@ -480,13 +464,13 @@ class BitacoraSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
     usuario_apellido = serializers.CharField(source='usuario.apellido', read_only=True)
     nombre_completo = serializers.SerializerMethodField()
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
+    
     class Meta:
         model = Bitacora
         fields = [
             'id', 'usuario', 'usuario_email', 'usuario_nombre', 'usuario_apellido', 
             'nombre_completo', 'ip_address', 'accion_realizada', 'modulo_afectado', 
-            'fecha_hora', 'detalles', 'cliente'
+            'fecha_hora', 'detalles'
         ]
         read_only_fields = ['fecha_hora']
 
@@ -499,13 +483,13 @@ class HorarioMedicoSerializer(serializers.ModelSerializer):
     especialidad_nombre = serializers.CharField(source='medico_especialidad.especialidad.nombre', read_only=True)
     medico_id = serializers.IntegerField(source='medico_especialidad.medico.usuario.id', read_only=True)
     especialidad_id = serializers.IntegerField(source='medico_especialidad.especialidad.id', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
+    
     class Meta:
         model = HorarioMedico
         fields = [
             'id', 'medico_especialidad', 'medico_id', 'medico_nombre', 'medico_apellido',
             'especialidad_id', 'especialidad_nombre', 'dia_semana',
-            'hora_inicio', 'hora_fin', 'activo', 'fecha_creacion', 'cliente'
+            'hora_inicio', 'hora_fin', 'activo', 'fecha_creacion'
         ]
         read_only_fields = ['fecha_creacion']
 
@@ -568,7 +552,6 @@ class AgendaCitaSerializer(serializers.ModelSerializer):
     especialidad_nombre = serializers.CharField(source='medico_especialidad.especialidad.nombre', read_only=True)
     medico_id = serializers.IntegerField(source='medico_especialidad.medico.usuario.id', read_only=True)
     especialidad_id = serializers.IntegerField(source='medico_especialidad.especialidad.id', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = AgendaCita
@@ -577,7 +560,7 @@ class AgendaCitaSerializer(serializers.ModelSerializer):
             'medico_especialidad', 'medico_id', 'medico_nombre', 'medico_apellido',
             'especialidad_id', 'especialidad_nombre',
             'fecha_cita', 'hora_cita', 'estado', 'motivo', 'notas',
-            'fecha_creacion', 'fecha_actualizacion', 'cliente'
+            'fecha_creacion', 'fecha_actualizacion'
         ]
         read_only_fields = ['fecha_creacion', 'fecha_actualizacion']
     
@@ -654,13 +637,12 @@ class HistoriaClinicaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='paciente.usuario.apellido', read_only=True)
     paciente_email = serializers.CharField(source='paciente.usuario.email', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = HistoriaClinica
         fields = [
             'id', 'paciente', 'paciente_nombre', 'paciente_apellido', 'paciente_email',
-            'fecha_creacion', 'observaciones_generales', 'activo', 'cliente'
+            'fecha_creacion', 'observaciones_generales', 'activo'
         ]
         read_only_fields = ['fecha_creacion']
 
@@ -673,14 +655,13 @@ class ConsultaSerializer(serializers.ModelSerializer):
     paciente = serializers.PrimaryKeyRelatedField(source='historia_clinica.paciente', read_only=True)  # ✅ ID real
     paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre', read_only=True)
     paciente_apellido = serializers.CharField(source='historia_clinica.paciente.usuario.apellido', read_only=True)
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Consulta
         fields = [
             'id', 'historia_clinica', 'medico', 'medico_nombre', 'medico_apellido',
-            'paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
-            'diagnostico', 'tratamiento', 'observaciones', 'cliente'
+            'paciente','paciente_nombre', 'paciente_apellido', 'fecha_consulta', 'motivo_consulta', 'sintomas',
+            'diagnostico', 'tratamiento', 'observaciones'
         ]
         
         read_only_fields = ['id', 'fecha_consulta']
@@ -691,7 +672,6 @@ class RegistroBackupSerializer(serializers.ModelSerializer):
     usuario_responsable_nombre = serializers.CharField(source='usuario_responsable.nombre', read_only=True)
     usuario_responsable_apellido = serializers.CharField(source='usuario_responsable.apellido', read_only=True)
     nombre_completo_responsable = serializers.SerializerMethodField()
-    cliente = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = RegistroBackup
@@ -700,26 +680,12 @@ class RegistroBackupSerializer(serializers.ModelSerializer):
             'usuario_responsable', 'usuario_responsable_email', 
             'usuario_responsable_nombre', 'usuario_responsable_apellido',
             'nombre_completo_responsable', 'tipo_backup', 'estado', 
-            'ubicacion_almacenamiento', 'notas', 'cliente'
+            'ubicacion_almacenamiento', 'notas'
         ]
         read_only_fields = ['fecha_backup']
 
     def get_nombre_completo_responsable(self, obj):
         return f"{obj.usuario_responsable.nombre} {obj.usuario_responsable.apellido}"
-
-class ClienteSuscriptorSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ClienteSuscriptor
-        fields = [
-            'id', 'nombre', 'descripcion', 'fecha_creacion'
-        ]
-        read_only_fields = ['fecha_creacion']
-
-#-----------------Prueba-------
-class AutoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Auto
-        fields = '__all__'
 
 # -------------------------------
 # EXÁMENES MÉDICOS 
@@ -753,3 +719,80 @@ class TipoExamenSelectSerializer(serializers.ModelSerializer):
     class Meta:
         model = TipoExamen
         fields = ['id', 'codigo', 'nombre']
+
+# -------------------------------
+# SERIALIZERS PARA NUEVOS MODELOS
+# -------------------------------
+
+class DocumentoSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='historia_clinica.paciente.usuario.nombre_completo', read_only=True)
+    
+    class Meta:
+        model = Documento
+        fields = [
+            'id', 'historia_clinica', 'consulta', 'tipo_documento', 'nombre_archivo',
+            'url_archivo', 'hash_archivo', 'fecha_subida', 'paciente_nombre'
+        ]
+        read_only_fields = ['fecha_subida']
+
+class DetalleRecetaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DetalleReceta
+        fields = ['id', 'receta', 'medicamento', 'dosis', 'frecuencia', 'duracion', 'indicaciones']
+
+class RecetaSerializer(serializers.ModelSerializer):
+    detalles = DetalleRecetaSerializer(many=True, read_only=True)
+    paciente_nombre = serializers.CharField(source='consulta.historia_clinica.paciente.usuario.nombre_completo', read_only=True)
+    medico_nombre = serializers.CharField(source='consulta.medico.usuario.nombre_completo', read_only=True)
+    
+    class Meta:
+        model = Receta
+        fields = [
+            'id', 'consulta', 'fecha_receta', 'observaciones', 'detalles',
+            'paciente_nombre', 'medico_nombre'
+        ]
+
+class SeguimientoSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='consulta.historia_clinica.paciente.usuario.nombre_completo', read_only=True)
+    medico_nombre = serializers.CharField(source='consulta.medico.usuario.nombre_completo', read_only=True)
+    
+    class Meta:
+        model = Seguimiento
+        fields = [
+            'id', 'consulta', 'fecha_seguimiento', 'observaciones', 'recomendaciones',
+            'paciente_nombre', 'medico_nombre'
+        ]
+
+class NotificacionSerializer(serializers.ModelSerializer):
+    usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    
+    class Meta:
+        model = Notificacion
+        fields = [
+            'id', 'usuario', 'usuario_email', 'usuario_nombre', 'tipo', 'titulo',
+            'mensaje', 'leida', 'fecha_envio', 'datos_adicionales'
+        ]
+        read_only_fields = ['fecha_envio']
+
+class DispositivoSerializer(serializers.ModelSerializer):
+    usuario_email = serializers.EmailField(source='usuario.email', read_only=True)
+    
+    class Meta:
+        model = Dispositivo
+        fields = [
+            'id', 'usuario', 'usuario_email', 'token_fcm', 'plataforma',
+            'activo', 'fecha_registro', 'fecha_actualizacion'
+        ]
+        read_only_fields = ['fecha_registro', 'fecha_actualizacion']
+
+class NotificacionCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificacion
+        fields = ['usuario', 'tipo', 'titulo', 'mensaje', 'datos_adicionales']
+
+#-----------------Prueba-------
+class AutoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Auto
+        fields = '__all__'

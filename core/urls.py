@@ -30,8 +30,6 @@ router.register(r'historias-clinicas', HistoriaClinicaViewSet)
 router.register(r'consultas', ConsultaViewSet)
 router.register(r'backups', RegistroBackupViewSet)
 
-router.register(r'clientes-suscriptores', ClienteSuscriptorViewSet)
-
 #---prueba---
 router.register(r'autos', AutoViewSet)
 
@@ -39,8 +37,18 @@ router.register(r'autos', AutoViewSet)
 router.register(r'tipos-examen', TipoExamenViewSet)
 router.register(r'solicitudes-examen', SolicitudExamenViewSet)
 
+# NUEVOS ROUTERS
+router.register(r'documentos', DocumentoViewSet)
+router.register(r'recetas', RecetaViewSet)
+router.register(r'seguimientos', SeguimientoViewSet)
+router.register(r'notificaciones', NotificacionViewSet)
+router.register(r'dispositivos', DispositivoViewSet)
+
 urlpatterns = [
     path('', include(router.urls)),
+
+    # Dashboard
+    path('dashboard/', dashboard, name='dashboard'),
 
     # Registro (Movil)
     path('registro/paciente/', RegistroPacienteView.as_view(), name='registro-paciente'),
@@ -74,6 +82,12 @@ urlpatterns = [
     
     # NUEVO ENDPOINT PARA HISTORIAS CLÍNICAS POR PACIENTE
     path('historias-clinicas/paciente/<int:paciente_id>/', historias_clinicas_por_paciente, name='historias-clinicas-por-paciente'),
+
+    # Reemplazar el endpoint antiguo o agregar el nuevo
+    path('historial-medico/paciente/<int:paciente_id>/', historial_medico_completo, name='historial-medico-completo'),
+
+    # Notificaciones personalizadas
+    path('notificaciones/enviar-personalizada/', EnviarNotificacionPersonalizadaView.as_view(), name='enviar-notificacion-personalizada'),
 ]
 
 # URLs AUTOMÁTICAS DE CONSULTAVIEWSET MEJORADO (CRUD COMPLETO + NUEVOS ENDPOINTS)
