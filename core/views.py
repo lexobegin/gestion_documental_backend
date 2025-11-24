@@ -2881,7 +2881,22 @@ class NotificacionViewSet(viewsets.ModelViewSet):
     ordering = ['-fecha_envio']
 
     def get_queryset(self):
-        return Notificacion.objects.filter(usuario=self.request.user)
+        queryset = super().get_queryset()
+        
+        # Si NO es administrador NI médico, filtrar solo sus notificaciones
+        if not (hasattr(self.request.user, 'administrador') or hasattr(self.request.user, 'medico')):
+            queryset = queryset.filter(usuario=self.request.user)
+        
+        # Filtro opcional por usuario_id (SOLO para administradores y médicos)
+        usuario_id = self.request.query_params.get('usuario_id')
+        if usuario_id and (hasattr(self.request.user, 'administrador') or hasattr(self.request.user, 'medico')):
+            try:
+                queryset = queryset.filter(usuario_id=usuario_id)
+            except ValueError:
+                # Si usuario_id no es válido, ignorar el filtro
+                pass
+            
+        return queryset
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -2903,7 +2918,14 @@ class NotificacionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='marcar-todas-leidas')
     def marcar_todas_leidas(self, request):
-        Notificacion.objects.filter(usuario=request.user, leida=False).update(leida=True)
+        queryset = self.get_queryset().filter(leida=False)
+        
+        # Si es admin/médico y se especifica usuario_id, filtrar por ese usuario
+        usuario_id = request.data.get('usuario_id')
+        if usuario_id and (hasattr(request.user, 'administrador') or hasattr(request.user, 'medico')):
+            queryset = queryset.filter(usuario_id=usuario_id)
+        
+        queryset.update(leida=True)
         
         Bitacora.registrar_accion(
             usuario=self.request.user,
@@ -2917,9 +2939,102 @@ class NotificacionViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='no-leidas')
     def notificaciones_no_leidas(self, request):
-        notificaciones = self.get_queryset().filter(leida=False)
-        serializer = self.get_serializer(notificaciones, many=True)
-        return Response(serializer.data)
+        queryset = self.get_queryset().filter(leida=False)
+        
+        # Contar no leídas
+        total_no_leidas = queryset.count()
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'total_no_leidas': total_no_leidas,
+            'notificaciones': serializer.data
+        })
+
+    @action(detail=False, methods=['post'], url_path='enviar-paciente')
+    def enviar_notificacion_paciente(self, request):
+        """
+        Endpoint para que médicos y admins envíen notificaciones personalizadas a pacientes
+        """
+        from .services.notificaciones import ServicioNotificaciones
+        
+        # Verificar que es médico O admin
+        if not (hasattr(request.user, 'medico') or hasattr(request.user, 'administrador')):
+            return Response(
+                {'error': 'Solo médicos y administradores pueden enviar notificaciones a pacientes'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        paciente_id = request.data.get('paciente_id')
+        titulo = request.data.get('titulo')
+        mensaje = request.data.get('mensaje')
+        tipo = request.data.get('tipo', 'sistema')
+        
+        if not all([paciente_id, titulo, mensaje]):
+            return Response(
+                {'error': 'paciente_id, titulo y mensaje son requeridos'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            paciente = Paciente.objects.get(usuario_id=paciente_id)
+            
+            # Si es médico, verificar que ha atendido al paciente
+            if hasattr(request.user, 'medico'):
+                ha_atendido_paciente = Consulta.objects.filter(
+                    medico=request.user.medico,
+                    historia_clinica__paciente=paciente
+                ).exists()
+                
+                if not ha_atendido_paciente:
+                    return Response(
+                        {'error': 'Solo puede enviar notificaciones a pacientes que ha atendido'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
+            # Determinar quién envía
+            if hasattr(request.user, 'medico'):
+                enviado_por = 'medico'
+                nombre_emisor = request.user.medico.usuario.nombre_completo
+            else:
+                enviado_por = 'admin'
+                nombre_emisor = request.user.nombre_completo
+            
+            # Enviar notificación
+            notificacion = ServicioNotificaciones.crear_y_enviar_notificacion(
+                usuario=paciente.usuario,
+                tipo=tipo,
+                titulo=titulo,
+                mensaje=mensaje,
+                datos_adicionales={
+                    'enviado_por': enviado_por,
+                    'emisor_id': request.user.id,
+                    'emisor_nombre': nombre_emisor
+                }
+            )
+            
+            Bitacora.registrar_accion(
+                usuario=request.user,
+                request=request,
+                accion=f"Envió notificación personalizada a paciente",
+                modulo="notificaciones",
+                detalles=f"Notificación enviada a {paciente.usuario.nombre_completo}: {titulo}"
+            )
+            
+            return Response(
+                NotificacionSerializer(notificacion).data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Paciente.DoesNotExist:
+            return Response(
+                {'error': 'Paciente no encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Error enviando notificación: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class DispositivoViewSet(viewsets.ModelViewSet):
     queryset = Dispositivo.objects.all()
