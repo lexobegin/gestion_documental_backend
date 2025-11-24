@@ -41,7 +41,7 @@ router.register(r'solicitudes-examen', SolicitudExamenViewSet)
 router.register(r'documentos', DocumentoViewSet)
 router.register(r'recetas', RecetaViewSet)
 router.register(r'seguimientos', SeguimientoViewSet)
-router.register(r'notificaciones', NotificacionViewSet)
+router.register(r'notificaciones', NotificacionViewSet, basename='notificacion')
 router.register(r'dispositivos', DispositivoViewSet)
 
 urlpatterns = [
