@@ -522,9 +522,11 @@ class Documento(models.Model):
         verbose_name_plural = "Documentos"
         db_table = 'documentos'
 
+from django.utils.timezone import localdate
+
 class Receta(models.Model):
     consulta = models.ForeignKey('Consulta', on_delete=models.CASCADE)
-    fecha_receta = models.DateField(default=timezone.now)
+    fecha_receta = models.DateField(default=localdate)   # ← CORREGIDO
     observaciones = models.TextField(blank=True, null=True)
     
     def __str__(self):
@@ -535,8 +537,13 @@ class Receta(models.Model):
         verbose_name_plural = "Recetas"
         db_table = 'recetas'
 
+
 class DetalleReceta(models.Model):
-    receta = models.ForeignKey('Receta', on_delete=models.CASCADE)
+    receta = models.ForeignKey(
+        'Receta',
+        on_delete=models.CASCADE,
+        related_name='detalles'  # ← NECESARIO PARA QUE EL SERIALIZER FUNCIONE
+    )
     medicamento = models.CharField(max_length=100)
     dosis = models.CharField(max_length=50)
     frecuencia = models.CharField(max_length=50)

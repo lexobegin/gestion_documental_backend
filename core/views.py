@@ -2841,6 +2841,29 @@ class RecetaViewSet(viewsets.ModelViewSet):
             detalles=f"Receta para {instance.consulta.historia_clinica.paciente.usuario.nombre_completo}"
         )
 
+class DetalleRecetaViewSet(viewsets.ModelViewSet):
+    queryset = DetalleReceta.objects.all()
+    serializer_class = DetalleRecetaSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # PACIENTE → solo ve sus recetas
+        if hasattr(user, 'paciente'):
+            return DetalleReceta.objects.filter(
+                receta__consulta__historia_clinica__paciente=user.paciente
+            )
+
+        # MÉDICO → solo detalles de recetas de sus pacientes
+        if hasattr(user, 'medico'):
+            return DetalleReceta.objects.filter(
+                receta__consulta__medico=user.medico
+            )
+
+        # ADMIN → ve todo
+        return DetalleReceta.objects.all()
+
 class SeguimientoViewSet(viewsets.ModelViewSet):
     queryset = Seguimiento.objects.select_related(
         'consulta__historia_clinica__paciente__usuario',

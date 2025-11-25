@@ -40,6 +40,7 @@ router.register(r'solicitudes-examen', SolicitudExamenViewSet)
 # NUEVOS ROUTERS
 router.register(r'documentos', DocumentoViewSet)
 router.register(r'recetas', RecetaViewSet)
+router.register(r'detalles-receta', DetalleRecetaViewSet)
 router.register(r'seguimientos', SeguimientoViewSet)
 router.register(r'notificaciones', NotificacionViewSet, basename='notificacion')
 router.register(r'dispositivos', DispositivoViewSet)
